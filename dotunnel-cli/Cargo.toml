@@ -1,0 +1,21 @@
+[package]
+name = "dotunnel-cli"
+version = "0.0.1"
+authors = ["Hyeseong Kim <hey@hyeseong.kim>"]
+edition = "2021"
+homepage = "https://github.com/cometkim/dotunnel/tree/main/dotunnel-cli"
+repository = "https://github.com/cometkim/dotunnel/tree/main/dotunnel-cli"
+license = "MIT"
+
+[[bin]]
+name = "dotunnel"
+path = "src/main.rs"
+bench = false
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5.4", features = ["derive"] }
+log = "0.4.21"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+toml = "0.8"

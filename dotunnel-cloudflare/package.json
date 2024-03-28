@@ -1,0 +1,5 @@
+{
+  "name": "dotunnel-cloudflare",
+  "description": "DOtunnel dashboard and relay implementation powered by Cloudflare Pages & Durable Objects",
+  "private": true
+}
