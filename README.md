@@ -77,11 +77,19 @@ TBD
 
 ## Security & Privacy
 
-DOTunnel is designed for organizational use and development purposes.
+DOtunnel is designed for organizational use and development purposes.
 
 Every tunnel is secured via a WebSocket Secure connection, but TLS is going to be terminated once it reaches the Cloudflare infrastructure (You should trust them), allowing content to be read or manipulated for productivity and security features.
 
 However, this doesn't necessarily mean you cannot use DOtunnel for private use. You can configure another relay server into your personal Cloudflare account. DOtunnel CLI supports multiple relay servers via `--profile`.
+
+## Caveats
+
+Ideally, Durable Objects would be the perfect fit for tunneling, but this isn't always the case.
+
+Because DOs don't colocate with workers in all regions (yet). Depending on your regional location, inefficient round trips may occur. You can test it from [Where Durable Objects Live]
+
+It can be similar to network throttling even if you don't want it to. (it might be good for testing)
 
 ## LICENSE
 
@@ -89,3 +97,4 @@ MIT
 
 [Cloudflare Tunnel]: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
 [Durable Objects]: https://developers.cloudflare.com/durable-objects/
+[Where Durable Objects Live]: https://where.durableobjects.live/
