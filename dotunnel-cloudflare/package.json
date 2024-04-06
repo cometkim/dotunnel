@@ -1,5 +1,17 @@
 {
   "name": "dotunnel-cloudflare",
   "description": "DOtunnel dashboard and relay implementation powered by Cloudflare Pages & Durable Objects",
-  "private": true
+  "private": true,
+  "scripts": {
+    "wrangler": "wrangler"
+  },
+  "dependencies": {
+    "cloudflare": "^3.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240404.0",
+    "typescript": "^5.4.4",
+    "vitest": "^1.4.0",
+    "wrangler": "^3.47.1"
+  }
 }
