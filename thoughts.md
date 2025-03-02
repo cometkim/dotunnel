@@ -1,0 +1,35 @@
+- BYOC("Bring Your Own Cloudflare") is a quote good framing IMO.
+- It needs config anyway.
+  - Something like declarative config file for automatic setup will be very helpful.
+  - Or interactive wizard?
+- There is a prior work with the exact same approach
+  - ref: https://stellate.co/blog/stellate-serve
+  - They mention that it "just works". No other public resources.
+- DO supports TCP connection?
+  - Is it possible/worth to directly proxy using it?
+  - Is it any better than WebSocket tunnel?
+- Recording requests
+  - Persistence design matters
+  - CBOR & HTTP Exchange will help?
+  - Replaying?
+- 1 MiB for each message are too small
+  - Especially for multiparts
+  - A naive proxying will expose Cloudflare's limits
+  - How to use 1M chunks most efficiently?
+- Can I use [libp2p] implementations as its building blocks?
+  - Probably some modules... but not the entire stack
+  - [mplex] for body streams
+  - Nah, multiplexing is overkill. But priority queuing (headers > body chunks)
+- Representing body streams may need persistent layer
+  - Because to make it durable over proxy (overthought?)
+  - Buffers on proxy consume client memory hard
+  - Maybe lmdb or tmpfs
+- Actor abstraction
+  - Every single tunnel is actor
+  - Eveny single connection is actor
+  - Even every single HTTP request is stateful actor
+  - But it doesn't make sense to spawn everything as dedicated DO... Isn't it?
+  - The request/response body will require the R2 storage backend for unlimited size, while the rest of the metadata and state is sufficiently in-memory.
+
+[libp2p]: https://libp2p.io/
+[mplex]: https://github.com/libp2p/specs/blob/master/mplex/README.md
