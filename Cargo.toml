@@ -1,5 +1,9 @@
 [workspace]
+resolver = "2"
 members = [
+  "dotunnel",
   "dotunnel-cli"
 ]
-resolver = "2"
+
+[workspace.dependencies]
+dotunnel = { path = "./dotunnel" }

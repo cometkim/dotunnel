@@ -1,0 +1,22 @@
+[package]
+name = "dotunnel"
+version = "0.0.1"
+authors = ["Hyeseong Kim <hey@hyeseong.kim>"]
+edition = "2024"
+homepage = "https://github.com/cometkim/dotunnel/tree/main/dotunnel"
+repository = "https://github.com/cometkim/dotunnel"
+license = "MIT"
+
+[dependencies]
+bytes = { version = "1", features = ["serde"] }
+capnp = "0.20"
+hyper = { version = "1", features = ["full"] }
+hyper-tungstenite = "0.17"
+mime = "0.3"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+tracing = "0.1"
+
+[build-dependencies]
+capnpc = "0.20"

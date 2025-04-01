@@ -49,10 +49,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@cloudflare/workers-types@npm:^4.20240404.0":
-  version: 4.20240404.0
-  resolution: "@cloudflare/workers-types@npm:4.20240404.0"
-  checksum: 10c0/b6df441f23a7e039ddff3d5dc9bad5575df64ac68ed70c82c077469bb65f2ec40b4e8843315cd173a921ab90bb8f18720a770f29c1500fea9e7ee12754433b63
+"@cloudflare/workers-types@npm:^4.20250224.0":
+  version: 4.20250224.0
+  resolution: "@cloudflare/workers-types@npm:4.20250224.0"
+  checksum: 10c0/7227e0c6ca1e2d2eb1b32816a6bf7eef6ddd42ce65b7b95cdd98b0cdb82f7705250657a26d99c97da8be86939411d6526baec1b12acb1de0ae05de4861946a12
   languageName: node
   linkType: hard
 
@@ -1127,7 +1127,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "dotunnel-cloudflare@workspace:dotunnel-cloudflare"
   dependencies:
-    "@cloudflare/workers-types": "npm:^4.20240404.0"
+    "@cloudflare/workers-types": "npm:^4.20250224.0"
     cloudflare: "npm:^3.0.0"
     typescript: "npm:^5.4.4"
     vitest: "npm:^1.4.0"
