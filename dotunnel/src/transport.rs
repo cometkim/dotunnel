@@ -1,1 +1,1 @@
-mod message;
+pub mod message;
