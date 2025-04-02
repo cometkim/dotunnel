@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use capnp::{
     message::{ReaderOptions, TypedBuilder},
     serialize_packed,
@@ -8,6 +8,11 @@ use capnp::{
 use thiserror::Error;
 
 use crate::message_capnp;
+
+/// Each WebSocket message size should be less than 1 MiB
+/// 
+/// See https://developers.cloudflare.com/durable-objects/platform/limits/
+pub const SIZE_LIMIT: usize = 1_048_576;
 
 #[derive(Debug)]
 pub struct Message {
@@ -18,6 +23,9 @@ pub struct Message {
 pub enum MessageError {
     #[error("Failed to (de)serialize message")]
     Serialization(#[from] capnp::Error),
+
+    #[error("Each message size should be less than 1 MiB, size: {0}")]
+    SizeLimit(usize),
 }
 
 pub type MessageReader<'a> = message_capnp::message::Reader<'a>;
@@ -26,14 +34,6 @@ pub type MessageBuilder<'a> = message_capnp::message::Builder<'a>;
 impl From<Bytes> for Message {
     fn from(value: Bytes) -> Self {
         Self { inner: value }
-    }
-}
-
-impl From<Vec<u8>> for Message {
-    fn from(value: Vec<u8>) -> Self {
-        Self {
-            inner: value.into(),
-        }
     }
 }
 
@@ -60,9 +60,15 @@ impl Message {
         let mut msg_builder = builder.get_root()?;
         f(&mut msg_builder);
 
-        let mut buf = vec![];
-        serialize_packed::write_message(&mut buf, builder.borrow_inner_mut())?;
-        Ok(buf.into())
+        let capacity =
+            msg_builder.total_size()?.word_count as usize * capnp::private::units::BYTES_PER_WORD;
+        if capacity > SIZE_LIMIT {
+            return Err(MessageError::SizeLimit(capacity));
+        }
+
+        let mut buf = BytesMut::with_capacity(capacity);
+        serialize_packed::write_message((&mut buf).writer(), builder.borrow_inner_mut())?;
+        Ok(buf.freeze().into())
     }
 }
 
