@@ -37,12 +37,6 @@ impl From<Vec<u8>> for Message {
     }
 }
 
-impl Into<Bytes> for Message {
-    fn into(self) -> Bytes {
-        self.into_inner()
-    }
-}
-
 impl Message {
     pub fn into_inner(&self) -> Bytes {
         self.inner.to_owned()
@@ -60,7 +54,7 @@ impl Message {
 
     pub fn build_with<F>(f: F) -> Result<Self, MessageError>
     where
-        F: FnOnce(&mut MessageBuilder) -> (),
+        F: FnOnce(&mut MessageBuilder),
     {
         let mut builder = TypedBuilder::<message_capnp::message::Owned>::new_default();
         let mut msg_builder = builder.get_root()?;
@@ -86,13 +80,11 @@ mod tests {
             req_init.set_method("GET");
             req_init.set_uri("https://github.com/cometkim/dotunnel");
             req_init.set_version(1);
-            {
-                let mut headers = req_init.reborrow().init_headers(1);
-                let mut header0 = headers.reborrow().get(0);
-                header0.set_key("Content-Type");
-                header0.set_value("text/plain");
-            }
-            req_init.set_has_body(false);
+            req_init.set_has_body(true);
+            let mut headers = req_init.reborrow().init_headers(1);
+            let mut header0 = headers.reborrow().get(0);
+            header0.set_key("Content-Type");
+            header0.set_value("text/plain");
         })
         .unwrap();
 
@@ -106,14 +98,14 @@ mod tests {
                         "https://github.com/cometkim/dotunnel"
                     );
                     assert_eq!(req_init.get_version(), 1);
+                    assert!(req_init.get_has_body());
                     let headers = req_init.get_headers().unwrap();
-                    assert_eq!(headers.len(), 1);
                     let header0 = headers.get(0);
+                    assert_eq!(headers.len(), 1);
                     assert_eq!(header0.get_key().unwrap(), "Content-Type");
                     assert_eq!(header0.get_value().unwrap(), "text/plain");
-                    assert_eq!(req_init.get_has_body(), false);
                 }
-                _ => assert!(false, "Failed to read message"),
+                _ => panic!("Failed to read message"),
             })
             .unwrap();
     }
