@@ -26,7 +26,8 @@ struct RequestInit {
 }
 
 struct RequestBodyChunk {
-  bytes @0 :Data;
+  time @0 :UInt32;
+  bytes @1 :Data;
 }
 
 struct RequestBodyEnd {
@@ -52,7 +53,8 @@ struct ResponseEarlyHints {
 }
 
 struct ResponseBodyChunk {
-  bytes @0 :Data;
+  time @0 :UInt32;
+  bytes @1 :Data;
 }
 
 struct ResponseEnd {
