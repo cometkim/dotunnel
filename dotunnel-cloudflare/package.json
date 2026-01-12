@@ -1,17 +1,44 @@
 {
-  "name": "dotunnel-cloudflare",
-  "description": "DOtunnel dashboard and relay implementation powered by Cloudflare Pages & Durable Objects",
   "private": true,
+  "name": "dotunnel-cloudflare",
+  "description": "DOtunnel dashboard and relay implementation powered by Cloudflare Workers",
+  "type": "module",
+  "imports": {
+    "#*": "./src/*"
+  },
   "scripts": {
-    "wrangler": "wrangler"
+    "wrangler": "wrangler",
+    "generate": "rw-scripts ensure-env && wrangler types --include-runtime false",
+    "dev": "vite dev",
+    "build": "vite build",
+    "check:types": "tsgo",
+    "check:format": "biome format",
+    "check:lint": "biome lint"
   },
   "dependencies": {
-    "cloudflare": "^3.0.0"
+    "@radix-ui/react-slot": "^1.2.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.562.0",
+    "react": "catalog:react",
+    "react-dom": "catalog:react",
+    "react-server-dom-webpack": "catalog:react",
+    "rwsdk": "catalog:",
+    "tailwind-merge": "^3.4.0",
+    "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250224.0",
-    "typescript": "^5.4.4",
-    "vitest": "^1.4.0",
-    "wrangler": "^3.47.1"
+    "@cloudflare/vite-plugin": "^1.20.1",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^25.0.6",
+    "@types/react": "catalog:react",
+    "@types/react-dom": "catalog:react",
+    "@typescript/native-preview": "catalog:",
+    "@vitejs/plugin-react": "^5.1.2",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "shadcn": "^3.6.3",
+    "tw-animate-css": "^1.4.0",
+    "vite": "^7.3.1",
+    "wrangler": "^4.58.0"
   }
 }

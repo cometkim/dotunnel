@@ -1,4 +1,4 @@
-- BYOC("Bring Your Own Cloudflare") is a quote good framing IMO.
+- BYOC("Bring Your Own Cloudflare") is a good framing IMO.
 - It needs config anyway.
   - Something like declarative config file for automatic setup will be very helpful.
   - Or interactive wizard?
@@ -12,10 +12,11 @@
   - Persistence design matters
   - CBOR & HTTP Exchange will help?
   - Replaying?
-- 1 MiB for each message are too small
+- ~~1 MiB~~ 32 MiB for each message are too small?
   - Especially for multiparts
   - A naive proxying will expose Cloudflare's limits
-  - How to use 1M chunks most efficiently?
+  - How to use limited chunks most efficiently?
+  - [32 MiB since 2025-10-31](https://developers.cloudflare.com/changelog/2025-10-31-increased-websocket-message-size-limit/)
 - Can I use [libp2p] implementations as its building blocks?
   - Probably some modules... but not the entire stack
   - [mplex] for body streams

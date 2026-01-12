@@ -1,8 +1,14 @@
 {
-  "name": "dotunnel",
   "private": true,
+  "name": "dotunnel",
   "packageManager": "yarn@4.12.0",
   "workspaces": [
     "dotunnel-cloudflare"
-  ]
+  ],
+  "resolutions": {
+    "esbuild": "^0.27.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.11"
+  }
 }
