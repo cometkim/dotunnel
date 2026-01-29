@@ -1,5 +1,11 @@
-import { prefix, render, route } from "rwsdk/router";
+import { render, route } from "rwsdk/router";
 import { defineApp } from "rwsdk/worker";
+import {
+  handleCliLogoutRequest,
+  handleDeviceCodeRequest,
+  handleDeviceTokenRequest,
+  handleUserInfoRequest,
+} from "#app/api/device.ts";
 import {
   handleCallback,
   handleLogin,
@@ -18,7 +24,8 @@ import { AdminDashboard } from "#app/pages/admin/Dashboard.tsx";
 import { AdminSessionsPage } from "#app/pages/admin/SessionsPage.tsx";
 import { AdminUsersPage } from "#app/pages/admin/UsersPage.tsx";
 import { BootstrapPage } from "#app/pages/Bootstrap.tsx";
-import { HomePage } from "#app/pages/Home.tsx";
+import { DeviceAuthPage } from "#app/pages/DeviceAuth.tsx";
+import { ServiceDashboard } from "#app/pages/service/Dashboard.tsx";
 
 // =============================================================================
 // App Context Type
@@ -43,24 +50,48 @@ export default defineApp([
   route("/_auth/callback", { get: ({ request }) => handleCallback(request) }),
   route("/_auth/logout", { get: ({ request }) => handleLogout(request) }),
 
+  // Device flow API routes (public, for CLI)
+  route("/_api/device/code", {
+    post: ({ request }) => handleDeviceCodeRequest(request),
+  }),
+  route("/_api/device/token", {
+    post: ({ request }) => handleDeviceTokenRequest(request),
+  }),
+  route("/_api/user", { get: ({ request }) => handleUserInfoRequest(request) }),
+  route("/_api/logout", {
+    post: ({ request }) => handleCliLogoutRequest(request),
+  }),
+
   // Page routes
   render(Document, [
-    route("/", HomePage),
+    // Public routes
     route("/_bootstrap", BootstrapPage),
 
-    // Admin routes (protected by requireAuth middleware which ensures user/session exist)
-    prefix("/admin", [
-      requireAuth(),
+    // Protected routes (requireAuth ensures user/session exist)
+    requireAuth(),
+
+    // Service routes (user dashboard)
+    // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
+    route("/", ({ ctx }) => <ServiceDashboard user={ctx.user!} />),
+
+    // Device authorization page (protected - user must be logged in)
+    route("/_device", ({ ctx, request }) => {
+      const url = new URL(request.url);
+      const code = url.searchParams.get("code") || undefined;
       // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
-      route("/", ({ ctx }) => <AdminDashboard user={ctx.user!} />),
+      return <DeviceAuthPage user={ctx.user!} initialCode={code} />;
+    }),
+
+    // Admin routes
+    // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
+    route("/admin", ({ ctx }) => <AdminDashboard user={ctx.user!} />),
+    // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
+    route("/admin/config", ({ ctx }) => <AdminConfig user={ctx.user!} />),
+    // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
+    route("/admin/users", ({ ctx }) => <AdminUsersPage user={ctx.user!} />),
+    route("/admin/sessions", ({ ctx }) => (
       // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
-      route("/config", ({ ctx }) => <AdminConfig user={ctx.user!} />),
-      // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
-      route("/users", ({ ctx }) => <AdminUsersPage user={ctx.user!} />),
-      route("/sessions", ({ ctx }) => (
-        // biome-ignore lint/style/noNonNullAssertion: guarded by requireAuth
-        <AdminSessionsPage user={ctx.user!} session={ctx.session!} />
-      )),
-    ]),
+      <AdminSessionsPage user={ctx.user!} session={ctx.session!} />
+    )),
   ]),
 ]);

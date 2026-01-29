@@ -15,7 +15,7 @@ bench = false
 [dependencies]
 anyhow = "1.0"
 bytes = { version = "1", features = ["serde"] }
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.4", features = ["derive", "env"] }
 clap-verbosity-flag = "2.2.0"
 config = { version = "0.14", features = ["toml"] }
 dirs-sys = "0.4.1"
@@ -25,6 +25,9 @@ hyper-tungstenite = "0.17"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["full"] }
 mime = "0.3"
+open = "5"
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"

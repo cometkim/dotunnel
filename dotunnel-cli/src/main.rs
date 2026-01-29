@@ -15,7 +15,8 @@ pub struct Cli {
     #[clap(flatten)]
     verbose: clap_verbosity_flag::Verbosity,
 
-    #[arg(long, default_value = "default")]
+    /// Profile to use for authentication and configuration
+    #[arg(long, default_value = "default", global = true)]
     profile: String,
 
     #[command(subcommand)]
@@ -49,14 +50,25 @@ fn init_logger_env(verbosity: &Verbosity) {
         .init();
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_logger_env(&cli.verbose);
 
-    tracing::info!("info log");
-    tracing::trace!("trace log");
-
-    println!("{cli:?}");
+    match &cli.command {
+        command::Command::Login(args) => {
+            command::login::execute(args, &cli.profile).await?;
+        }
+        command::Command::Logout(args) => {
+            command::logout::execute(args, &cli.profile).await?;
+        }
+        command::Command::Status(args) => {
+            command::status::execute(args, &cli.profile).await?;
+        }
+        command::Command::Setup(args) => {
+            command::setup::execute(args)?;
+        }
+    }
 
     Ok(())
 }

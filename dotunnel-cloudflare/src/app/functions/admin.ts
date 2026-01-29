@@ -46,10 +46,14 @@ export type AdminSession = {
   userId: number;
   userName: string;
   userEmail: string;
+  type: "browser" | "cli";
+  name: string | null;
   ipAddress: string | null;
   userAgent: string | null;
-  expiresAt: string;
+  expiresAt: string | null;
   createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
 };
 
 // =============================================================================
@@ -404,11 +408,12 @@ export async function deleteUser(
 // =============================================================================
 
 /**
- * Get all sessions with user info.
+ * Get all sessions with user info (both browser and CLI sessions).
  */
 export async function getSessions(): Promise<AdminSession[]> {
   const result = await env.DB.prepare(
-    `SELECT s.public_id, s.user_id, s.ip_address, s.user_agent, s.expires_at, s.created_at,
+    `SELECT s.public_id, s.user_id, s.type, s.name, s.ip_address, s.user_agent, 
+            s.expires_at, s.created_at, s.last_used_at, s.revoked_at,
             u.name as user_name, u.email as user_email
      FROM sessions s
      JOIN users u ON s.user_id = u.id
@@ -416,10 +421,14 @@ export async function getSessions(): Promise<AdminSession[]> {
   ).all<{
     public_id: string;
     user_id: number;
+    type: "browser" | "cli";
+    name: string | null;
     ip_address: string | null;
     user_agent: string | null;
-    expires_at: string;
+    expires_at: string | null;
     created_at: string;
+    last_used_at: string | null;
+    revoked_at: string | null;
     user_name: string;
     user_email: string;
   }>();
@@ -429,23 +438,45 @@ export async function getSessions(): Promise<AdminSession[]> {
     userId: row.user_id,
     userName: row.user_name,
     userEmail: row.user_email,
+    type: row.type || "browser", // Default for old sessions without type
+    name: row.name,
     ipAddress: row.ip_address,
     userAgent: row.user_agent,
     expiresAt: row.expires_at,
     createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    revokedAt: row.revoked_at,
   }));
 }
 
 /**
- * Delete a session.
+ * Delete or revoke a session.
+ * Browser sessions are deleted, CLI sessions are soft-deleted (revoked).
  */
 export async function deleteSession(
   publicId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   try {
-    await env.DB.prepare("DELETE FROM sessions WHERE public_id = ?1")
+    // Check if it's a CLI session
+    const session = await env.DB.prepare(
+      "SELECT type FROM sessions WHERE public_id = ?1",
+    )
       .bind(publicId)
-      .run();
+      .first<{ type: string | null }>();
+
+    if (session?.type === "cli") {
+      // Soft delete CLI sessions
+      await env.DB.prepare(
+        "UPDATE sessions SET revoked_at = ?1 WHERE public_id = ?2",
+      )
+        .bind(new Date().toISOString(), publicId)
+        .run();
+    } else {
+      // Hard delete browser sessions
+      await env.DB.prepare("DELETE FROM sessions WHERE public_id = ?1")
+        .bind(publicId)
+        .run();
+    }
     return { success: true };
   } catch (error) {
     return {

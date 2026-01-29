@@ -24,7 +24,9 @@ export async function AdminSessionsPage({
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold">Sessions</h1>
-          <p className="text-muted-foreground">Manage active user sessions</p>
+          <p className="text-muted-foreground">
+            Manage active user sessions and CLI tokens
+          </p>
         </div>
 
         <SessionsPageClient
