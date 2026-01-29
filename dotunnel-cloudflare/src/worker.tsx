@@ -6,6 +6,7 @@ import {
   handleDeviceTokenRequest,
   handleUserInfoRequest,
 } from "#app/api/device.ts";
+import { handleTunnelConnect } from "#app/api/tunnel.ts";
 import {
   handleCallback,
   handleLogin,
@@ -19,6 +20,7 @@ import {
   bootstrapGuard,
 } from "#app/middlewares/bootstrap-guard.ts";
 import { setCommonHeaders } from "#app/middlewares/headers.ts";
+import { tunnelProxy } from "#app/middlewares/tunnel-proxy.ts";
 import { AdminConfig } from "#app/pages/admin/Config.tsx";
 import { AdminDashboard } from "#app/pages/admin/Dashboard.tsx";
 import { AdminSessionsPage } from "#app/pages/admin/SessionsPage.tsx";
@@ -26,6 +28,12 @@ import { AdminUsersPage } from "#app/pages/admin/UsersPage.tsx";
 import { BootstrapPage } from "#app/pages/Bootstrap.tsx";
 import { DeviceAuthPage } from "#app/pages/DeviceAuth.tsx";
 import { ServiceDashboard } from "#app/pages/service/Dashboard.tsx";
+
+// =============================================================================
+// Durable Object Export
+// =============================================================================
+
+export { TunnelSession } from "#durable-objects/TunnelSession.ts";
 
 // =============================================================================
 // App Context Type
@@ -42,6 +50,10 @@ export type AppContext = BootstrapContextFields & {
 
 export default defineApp([
   setCommonHeaders(),
+
+  // Tunnel proxy - handles requests to *.tunnel.io (before bootstrap check)
+  tunnelProxy(),
+
   bootstrapGuard(),
   sessionLoader(),
 
@@ -60,6 +72,12 @@ export default defineApp([
   route("/_api/user", { get: ({ request }) => handleUserInfoRequest(request) }),
   route("/_api/logout", {
     post: ({ request }) => handleCliLogoutRequest(request),
+  }),
+
+  // Tunnel connect API (CLI WebSocket connection)
+  route("/_api/tunnel/connect", {
+    post: ({ request }) => handleTunnelConnect(request),
+    get: ({ request }) => handleTunnelConnect(request),
   }),
 
   // Page routes

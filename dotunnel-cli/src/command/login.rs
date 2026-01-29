@@ -1,6 +1,8 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use std::sync::Arc;
+use reqwest_hickory_resolver::HickoryResolver;
 
 use crate::config::{Config, Credentials, ProfileConfig, ProfileCredentials};
 
@@ -78,7 +80,10 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     println!();
 
     // Step 1: Request device code
-    let client = reqwest::Client::new();
+    let resolver = Arc::new(HickoryResolver::default());
+    let client = reqwest::Client::builder()
+        .dns_resolver(resolver)
+        .build()?;
     let device_code_url = format!("{}/_api/device/code", service_url);
 
     let response = client

@@ -170,6 +170,24 @@ export async function createTunnel(
 ): Promise<TunnelResult<TunnelDisplay>> {
   try {
     const userId = requireUserId();
+    return createTunnelForUser(userId, input);
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to create tunnel",
+    };
+  }
+}
+
+/**
+ * Create a new tunnel for a specific user (internal use).
+ * This is used by CLI API where userId comes from token validation.
+ */
+export async function createTunnelForUser(
+  userId: number,
+  input: unknown,
+): Promise<TunnelResult<TunnelDisplay>> {
+  try {
     // Validate input
     const parseResult = v.safeParse(CreateTunnelInput, input);
     if (!parseResult.success) {

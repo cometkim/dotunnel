@@ -6,6 +6,9 @@ use clap_verbosity_flag::Verbosity;
 
 mod command;
 mod config;
+mod message_capnp {
+    include!(concat!(env!("OUT_DIR"), "/message_capnp.rs"));
+}
 mod sys;
 
 #[derive(Debug, clap::Parser)]
@@ -67,6 +70,9 @@ async fn main() -> Result<()> {
         }
         command::Command::Setup(args) => {
             command::setup::execute(args)?;
+        }
+        command::Command::Tunnel(args) => {
+            command::tunnel::execute(args, &cli.profile).await?;
         }
     }
 

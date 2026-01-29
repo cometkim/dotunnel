@@ -5,6 +5,9 @@ import { redwood } from "rwsdk/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  server: {
+    allowedHosts: true, // Allow all hosts for tunnel testing
+  },
   environments: {
     ssr: {},
   },

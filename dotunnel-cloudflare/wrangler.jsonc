@@ -28,8 +28,18 @@
     }
   ],
   "durable_objects": {
-    "bindings": []
+    "bindings": [
+      {
+        "name": "TUNNEL_SESSION",
+        "class_name": "TunnelSession"
+      }
+    ]
   },
-  "migrations": [],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["TunnelSession"]
+    }
+  ],
   "vars": {}
 }

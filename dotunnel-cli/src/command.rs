@@ -2,6 +2,7 @@ pub mod login;
 pub mod logout;
 pub mod setup;
 pub mod status;
+pub mod tunnel;
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
@@ -16,4 +17,7 @@ pub enum Command {
 
     /// Setup local development environment
     Setup(setup::Args),
+
+    /// Start a tunnel to expose a local server
+    Tunnel(tunnel::Args),
 }
