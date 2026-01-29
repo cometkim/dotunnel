@@ -131,9 +131,12 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
         .context("Not logged in. Run 'dotunnel login' first.")?;
     let token = creds.token.clone();
 
-    let local_addr: SocketAddr = format!("{}:{}", args.host, args.port)
-        .parse()
-        .context("Invalid local address")?;
+    // Resolve hostname to socket address
+    let local_addr: SocketAddr = tokio::net::lookup_host(format!("{}:{}", args.host, args.port))
+        .await
+        .context("Failed to resolve local address")?
+        .next()
+        .context("No addresses found for local host")?;
 
     // Run with reconnection
     let mut backoff_ms = INITIAL_BACKOFF_MS;
@@ -272,15 +275,28 @@ async fn run_tunnel(ws_stream: WsStream, local_addr: SocketAddr) -> Result<()> {
                         // Handle JSON control messages (tunnel_ready, etc.)
                     }
                     Some(Ok(WsMessage::Binary(data))) => {
-                        // Handle binary Cap'n Proto message
-                        if let Err(e) = handle_binary_message(
-                            &data,
-                            local_addr,
-                            ws_write.clone(),
-                            streams.clone(),
-                            msg_seq_counter.clone(),
-                        ).await {
-                            error!("Error handling message: {}", e);
+                        // Decode message synchronously to extract owned data
+                        match decode_binary_message(&data) {
+                            Ok(decoded) => {
+                                // Handle in separate task for concurrent processing
+                                let ws_write = ws_write.clone();
+                                let streams = streams.clone();
+                                let msg_seq_counter = msg_seq_counter.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = handle_decoded_message(
+                                        decoded,
+                                        local_addr,
+                                        ws_write,
+                                        streams,
+                                        msg_seq_counter,
+                                    ).await {
+                                        error!("Error handling message: {}", e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("Error decoding message: {}", e);
+                            }
                         }
                     }
                     Some(Ok(WsMessage::Ping(data))) => {
@@ -316,15 +332,56 @@ async fn run_tunnel(ws_stream: WsStream, local_addr: SocketAddr) -> Result<()> {
     }
 }
 
-/// Handle binary message from server (Cap'n Proto)
-async fn handle_binary_message(
-    data: &[u8],
-    local_addr: SocketAddr,
-    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
-    streams: Arc<Mutex<HashMap<u32, StreamState>>>,
-    msg_seq_counter: Arc<AtomicU32>,
-) -> Result<()> {
-    // Decode packed Cap'n Proto message
+// =============================================================================
+// Decoded Message Types (owned, Send-safe)
+// =============================================================================
+
+#[derive(Debug)]
+enum DecodedMessage {
+    Http {
+        stream_id: u32,
+        connection_id: u64,
+        http: DecodedHttpMessage,
+    },
+    Ws {
+        stream_id: u32,
+        opcode: u16,
+        payload: Vec<u8>,
+        close_code: Option<u16>,
+    },
+    Control {
+        connection_id: u64,
+        control: DecodedControlMessage,
+    },
+}
+
+#[derive(Debug)]
+enum DecodedHttpMessage {
+    RequestInit {
+        method: String,
+        uri: String,
+        headers: Vec<(String, String)>,
+        has_body: bool,
+    },
+    RequestBodyChunk {
+        data: Vec<u8>,
+    },
+    RequestEnd,
+    RequestAbort {
+        reason: i16,
+    },
+}
+
+#[derive(Debug)]
+enum DecodedControlMessage {
+    Ping { data: Vec<u8> },
+    Pong,
+    Error { code: u32, message: String },
+    GoAway { reason: String },
+}
+
+/// Decode binary message synchronously into owned types
+fn decode_binary_message(data: &[u8]) -> Result<DecodedMessage> {
     let mut cursor = Cursor::new(data);
     let reader = serialize_packed::read_message(&mut cursor, ReaderOptions::new())?;
     let envelope = reader.get_root::<message_capnp::envelope::Reader>()?;
@@ -335,72 +392,112 @@ async fn handle_binary_message(
     match envelope.which()? {
         message_capnp::envelope::Which::Http(http) => {
             let http = http?;
-            handle_http_message(
-                http,
-                stream_id,
-                connection_id,
-                local_addr,
-                ws_write,
-                streams,
-                msg_seq_counter,
-            )
-            .await?;
+            let decoded_http = match http.which()? {
+                message_capnp::http_message::Which::RequestInit(init) => {
+                    let init = init?;
+                    let method = init.get_method()?.to_string()?;
+                    let uri = init.get_uri()?.to_string()?;
+                    let has_body = init.get_has_body();
+                    let mut headers = Vec::new();
+                    for header in init.get_headers()? {
+                        let name = header.get_name()?.to_string()?;
+                        let value_bytes = header.get_value()?;
+                        let value = String::from_utf8_lossy(value_bytes).to_string();
+                        headers.push((name, value));
+                    }
+                    DecodedHttpMessage::RequestInit { method, uri, headers, has_body }
+                }
+                message_capnp::http_message::Which::RequestBodyChunk(chunk) => {
+                    let chunk = chunk?;
+                    let data = chunk.get_data()?.to_vec();
+                    DecodedHttpMessage::RequestBodyChunk { data }
+                }
+                message_capnp::http_message::Which::RequestEnd(_) => {
+                    DecodedHttpMessage::RequestEnd
+                }
+                message_capnp::http_message::Which::RequestAbort(abort) => {
+                    let abort = abort?;
+                    let reason = abort.get_reason()? as i16;
+                    DecodedHttpMessage::RequestAbort { reason }
+                }
+                _ => return Err(anyhow::anyhow!("Unexpected HTTP message type")),
+            };
+            Ok(DecodedMessage::Http { stream_id, connection_id, http: decoded_http })
         }
         message_capnp::envelope::Which::Ws(ws) => {
             let ws = ws?;
             let opcode = ws.get_opcode()? as u16;
-            let payload = ws.get_payload()?;
-            let close_code = if opcode == 8 {
-                Some(ws.get_close_code())
-            } else {
-                None
-            };
-            
-            debug!("Stream {}: Received WebSocket frame (opcode: {})", stream_id, opcode);
-            
-            // Forward to local WebSocket
-            let mut streams_guard = streams.lock().await;
-            handle_ws_frame(stream_id, opcode, payload, close_code, &mut streams_guard);
+            let payload = ws.get_payload()?.to_vec();
+            let close_code = if opcode == 8 { Some(ws.get_close_code()) } else { None };
+            Ok(DecodedMessage::Ws { stream_id, opcode, payload, close_code })
         }
         message_capnp::envelope::Which::Control(control) => {
             let control = control?;
-            handle_control_message(control, connection_id, ws_write).await?;
+            let decoded_control = match control.which()? {
+                message_capnp::control::Which::Ping(ping) => {
+                    let ping = ping?;
+                    let data = ping.get_data()?.to_vec();
+                    DecodedControlMessage::Ping { data }
+                }
+                message_capnp::control::Which::Pong(_) => DecodedControlMessage::Pong,
+                message_capnp::control::Which::Error(error) => {
+                    let error = error?;
+                    let code = error.get_code();
+                    let message = error.get_message()?.to_str()?.to_string();
+                    DecodedControlMessage::Error { code, message }
+                }
+                message_capnp::control::Which::GoAway(go_away) => {
+                    let go_away = go_away?;
+                    let reason = go_away.get_reason()?.to_str()?.to_string();
+                    DecodedControlMessage::GoAway { reason }
+                }
+                message_capnp::control::Which::FlowWindowUpdate(_) => {
+                    // Flow control - ignore for now
+                    return Err(anyhow::anyhow!("FlowWindowUpdate not implemented"));
+                }
+            };
+            Ok(DecodedMessage::Control { connection_id, control: decoded_control })
         }
     }
-
-    Ok(())
 }
 
-/// Handle HTTP message
-async fn handle_http_message(
-    http: message_capnp::http_message::Reader<'_>,
-    stream_id: u32,
-    connection_id: u64,
+/// Handle decoded message (async, can be spawned)
+async fn handle_decoded_message(
+    msg: DecodedMessage,
     local_addr: SocketAddr,
     ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
     streams: Arc<Mutex<HashMap<u32, StreamState>>>,
     msg_seq_counter: Arc<AtomicU32>,
 ) -> Result<()> {
-    match http.which()? {
-        message_capnp::http_message::Which::RequestInit(init) => {
-            let init = init?;
-            let method = init.get_method()?.to_string()?;
-            let uri = init.get_uri()?.to_string()?;
-            let has_body = init.get_has_body();
+    match msg {
+        DecodedMessage::Http { stream_id, connection_id, http } => {
+            handle_decoded_http(stream_id, connection_id, http, local_addr, ws_write, streams, msg_seq_counter).await?;
+        }
+        DecodedMessage::Ws { stream_id, opcode, payload, close_code } => {
+            debug!("Stream {}: Received WebSocket frame (opcode: {})", stream_id, opcode);
+            let mut streams_guard = streams.lock().await;
+            handle_ws_frame(stream_id, opcode, &payload, close_code, &mut streams_guard);
+        }
+        DecodedMessage::Control { connection_id, control } => {
+            handle_decoded_control(connection_id, control, ws_write).await?;
+        }
+    }
+    Ok(())
+}
 
-            // Extract headers
-            let mut headers = Vec::new();
-            for header in init.get_headers()? {
-                let name = header.get_name()?.to_string()?;
-                let value_bytes = header.get_value()?;
-                let value = String::from_utf8_lossy(value_bytes).to_string();
-                headers.push((name, value));
-            }
-
-            debug!(
-                "Stream {}: {} {} (hasBody: {})",
-                stream_id, method, uri, has_body
-            );
+/// Handle decoded HTTP message
+async fn handle_decoded_http(
+    stream_id: u32,
+    connection_id: u64,
+    http: DecodedHttpMessage,
+    local_addr: SocketAddr,
+    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
+    streams: Arc<Mutex<HashMap<u32, StreamState>>>,
+    msg_seq_counter: Arc<AtomicU32>,
+) -> Result<()> {
+    match http {
+        DecodedHttpMessage::RequestInit { method, uri, headers, has_body } => {
+            debug!("Stream {}: {} {} (hasBody: {})", stream_id, method, uri, has_body);
 
             // Check if this is a WebSocket upgrade request
             let is_websocket = headers.iter().any(|(name, value)| {
@@ -408,7 +505,6 @@ async fn handle_http_message(
             });
 
             if is_websocket {
-                // Handle WebSocket upgrade
                 debug!("Stream {}: WebSocket upgrade request", stream_id);
                 handle_websocket_upgrade(
                     stream_id,
@@ -419,12 +515,11 @@ async fn handle_http_message(
                     ws_write.clone(),
                     streams.clone(),
                     msg_seq_counter.clone(),
-                )
-                .await?;
+                ).await?;
             } else {
                 // Store pending HTTP request
-                let mut streams = streams.lock().await;
-                streams.insert(
+                let mut streams_guard = streams.lock().await;
+                streams_guard.insert(
                     stream_id,
                     StreamState {
                         stream_type: StreamType::Http {
@@ -432,81 +527,58 @@ async fn handle_http_message(
                                 method,
                                 uri,
                                 headers,
-                                body_chunks: Vec::new(),
+                                body_chunks: vec![],
                                 has_body,
                             }),
                         },
                     },
                 );
-
-                // If no body, process immediately
-                if !has_body {
-                    drop(streams);
-                    process_request(
-                        stream_id,
-                        connection_id,
-                        local_addr,
-                        ws_write,
-                        Arc::clone(&Arc::new(Mutex::new(HashMap::new()))),
-                        msg_seq_counter,
-                    )
-                    .await?;
+            }
+        }
+        DecodedHttpMessage::RequestBodyChunk { data } => {
+            let mut streams_guard = streams.lock().await;
+            if let Some(state) = streams_guard.get_mut(&stream_id) {
+                if let StreamType::Http { pending_request: Some(pending) } = &mut state.stream_type {
+                    pending.body_chunks.push(data);
                 }
             }
         }
-        message_capnp::http_message::Which::RequestBodyChunk(chunk) => {
-            let chunk = chunk?;
-            let data = chunk.get_data()?.to_vec();
-            let is_last = chunk.get_is_last();
-
-            debug!(
-                "Stream {}: body chunk {} bytes (isLast: {})",
-                stream_id,
-                data.len(),
-                is_last
-            );
-
-            // Append body chunk
-            {
-                let mut streams = streams.lock().await;
-                if let Some(state) = streams.get_mut(&stream_id) {
-                    if let StreamType::Http { pending_request: Some(pending) } = &mut state.stream_type {
-                        pending.body_chunks.push(data);
-                    }
-                }
-            }
-
-            // If this is the last chunk, we'll process on RequestEnd
-        }
-        message_capnp::http_message::Which::RequestEnd(_) => {
+        DecodedHttpMessage::RequestEnd => {
             debug!("Stream {}: request end", stream_id);
-            process_request(
-                stream_id,
-                connection_id,
-                local_addr,
-                ws_write,
-                streams,
-                msg_seq_counter,
-            )
-            .await?;
+            process_request(stream_id, connection_id, local_addr, ws_write, streams, msg_seq_counter).await?;
         }
-        message_capnp::http_message::Which::RequestAbort(abort) => {
-            let abort = abort?;
-            warn!(
-                "Stream {}: request aborted: {:?}",
-                stream_id,
-                abort.get_reason()
-            );
-            // Clean up stream
-            let mut streams = streams.lock().await;
-            streams.remove(&stream_id);
-        }
-        _ => {
-            // Response messages shouldn't come from server to CLI
-            debug!("Stream {}: ignoring response message", stream_id);
+        DecodedHttpMessage::RequestAbort { reason } => {
+            warn!("Stream {}: request aborted: {}", stream_id, reason);
+            let mut streams_guard = streams.lock().await;
+            streams_guard.remove(&stream_id);
         }
     }
+    Ok(())
+}
 
+/// Handle decoded control message
+async fn handle_decoded_control(
+    connection_id: u64,
+    control: DecodedControlMessage,
+    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
+) -> Result<()> {
+    match control {
+        DecodedControlMessage::Ping { data } => {
+            debug!("Received control ping");
+            let pong = encode_control_pong(connection_id, &data);
+            let mut ws = ws_write.lock().await;
+            ws.send(WsMessage::Binary(pong.into())).await?;
+        }
+        DecodedControlMessage::Pong => {
+            debug!("Received control pong");
+        }
+        DecodedControlMessage::Error { code, message } => {
+            error!("Control error {}: {}", code, message);
+        }
+        DecodedControlMessage::GoAway { reason } => {
+            warn!("Received GoAway: {}", reason);
+        }
+    }
     Ok(())
 }
 
@@ -552,33 +624,31 @@ async fn process_request(
 
     match result {
         Ok((status, headers, body)) => {
+            // Batch all response messages and send them together
+            let mut ws = ws_write.lock().await;
+            
             // Send response init
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_init =
                 encode_response_init(connection_id, stream_id, msg_seq, status, &headers, !body.is_empty());
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(response_init.into())).await?;
-            }
+            ws.feed(WsMessage::Binary(response_init.into())).await?;
 
             // Send body if any
             if !body.is_empty() {
                 let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
                 let body_chunk =
                     encode_response_body_chunk(connection_id, stream_id, msg_seq, &body, 0, true);
-                {
-                    let mut ws = ws_write.lock().await;
-                    ws.send(WsMessage::Binary(body_chunk.into())).await?;
-                }
+                ws.feed(WsMessage::Binary(body_chunk.into())).await?;
             }
 
             // Send response end
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_end = encode_response_end(connection_id, stream_id, msg_seq);
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(response_end.into())).await?;
-            }
+            ws.feed(WsMessage::Binary(response_end.into())).await?;
+            
+            // Flush all messages at once
+            ws.flush().await?;
+            drop(ws);
 
             info!(
                 "Stream {}: {} {} -> {}",
@@ -931,42 +1001,6 @@ fn handle_ws_frame(
     }
 }
 
-/// Handle control message
-async fn handle_control_message(
-    control: message_capnp::control::Reader<'_>,
-    connection_id: u64,
-    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
-) -> Result<()> {
-    match control.which()? {
-        message_capnp::control::Which::Ping(ping) => {
-            let ping = ping?;
-            let data = ping.get_data()?.to_vec();
-            debug!("Received control ping");
-            // Send pong
-            let pong = encode_control_pong(connection_id, &data);
-            let mut ws = ws_write.lock().await;
-            ws.send(WsMessage::Binary(pong.into())).await?;
-        }
-        message_capnp::control::Which::Pong(_) => {
-            debug!("Received control pong");
-        }
-        message_capnp::control::Which::Error(error) => {
-            let error = error?;
-            error!(
-                "Control error {}: {}",
-                error.get_code(),
-                error.get_message()?.to_str()?
-            );
-        }
-        message_capnp::control::Which::GoAway(go_away) => {
-            let go_away = go_away?;
-            warn!("Received GoAway: {}", go_away.get_reason()?.to_str()?);
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 /// Forward request to local server
 async fn forward_to_local(
     local_addr: SocketAddr,
@@ -977,6 +1011,11 @@ async fn forward_to_local(
 ) -> Result<(u16, Vec<(String, String)>, Vec<u8>)> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        // Don't auto-decompress - forward raw bytes to preserve Content-Encoding
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
         .build()?;
 
     let url = format!("http://{}{}", local_addr, uri);
@@ -988,17 +1027,22 @@ async fn forward_to_local(
     let mut req = client.request(method, &url);
 
     for (name, value) in headers {
-        // Skip hop-by-hop headers
+        // Skip hop-by-hop headers and Accept-Encoding
         let name_lower = name.to_lowercase();
         if name_lower == "host"
             || name_lower == "connection"
             || name_lower == "upgrade"
             || name_lower == "transfer-encoding"
+            || name_lower == "accept-encoding"
         {
             continue;
         }
         req = req.header(&name, &value);
     }
+    
+    // Override Accept-Encoding to prevent local server from compressing.
+    // Cloudflare's edge will handle compression for the client.
+    req = req.header("Accept-Encoding", "identity");
 
     if !body.is_empty() {
         req = req.body(body);
@@ -1015,6 +1059,7 @@ async fn forward_to_local(
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
+    
     let body = resp.bytes().await?.to_vec();
 
     Ok((status, headers, body))
