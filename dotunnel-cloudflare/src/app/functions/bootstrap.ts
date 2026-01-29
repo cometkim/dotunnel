@@ -77,7 +77,7 @@ export async function getBootstrapState(): Promise<BootstrapState> {
     return { step: "admin", config };
   }
 
-  if (!config.tunnel.hostPattern) {
+  if (!config.service.host || !config.tunnel.hostPattern) {
     return { step: "tunnel", config };
   }
 
@@ -230,39 +230,49 @@ export async function getAdminUser(): Promise<{
 }
 
 // =============================================================================
-// Tunnel Configuration (Step 3)
+// Service & Tunnel Configuration (Step 3)
 // =============================================================================
 
 /**
- * Save tunnel host pattern configuration.
+ * Save service host and tunnel host pattern configuration.
  */
-export async function saveTunnelConfig(
-  hostPattern: string,
+export async function saveHostsConfig(
+  serviceHost: string,
+  tunnelHostPattern: string,
 ): Promise<
   { success: true; config: Config } | { success: false; error: string }
 > {
   try {
-    // Validate pattern format
-    if (!hostPattern.startsWith("*.")) {
+    // Validate service host
+    if (!serviceHost) {
       return {
         success: false,
-        error: "Host pattern must start with '*.' (e.g., *.example.com)",
+        error: "Service host is required",
+      };
+    }
+
+    // Validate tunnel pattern format
+    if (!tunnelHostPattern.startsWith("*.")) {
+      return {
+        success: false,
+        error: "Tunnel host pattern must start with '*.' (e.g., *.tunnel.io)",
       };
     }
 
     const result = await loadConfigFromDatabase();
     const config = result.config;
 
-    config.tunnel.hostPattern = hostPattern;
+    config.service.host = serviceHost;
+    config.tunnel.hostPattern = tunnelHostPattern;
 
     await saveConfig(config);
     return { success: true, config };
   } catch (error) {
-    console.error("Failed to save tunnel config:", error);
+    console.error("Failed to save hosts config:", error);
     return {
       success: false,
       error:
-        error instanceof Error ? error.message : "Failed to save tunnel config",
+        error instanceof Error ? error.message : "Failed to save hosts config",
     };
   }
 }
@@ -294,6 +304,10 @@ export async function completeBootstrap(): Promise<
     const hasAdmin = await checkAdminExists();
     if (!hasAdmin) {
       return { success: false, error: "Admin user is required" };
+    }
+
+    if (!config.service.host) {
+      return { success: false, error: "Service host is required" };
     }
 
     if (!config.tunnel.hostPattern) {

@@ -1,9 +1,14 @@
 "use client";
 
-import { KeyRound } from "lucide-react";
-import type * as React from "react";
-import { Alert, AlertDescription } from "#app/components/ui/alert.tsx";
-import { Button } from "#app/components/ui/button.tsx";
+import { AlertCircle, KeyRound } from "lucide-react";
+import * as React from "react";
+
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "#app/components/ui/alert.tsx";
+import { buttonVariants } from "#app/components/ui/button.tsx";
 import {
   Card,
   CardContent,
@@ -12,6 +17,7 @@ import {
   CardTitle,
 } from "#app/components/ui/card.tsx";
 import { getProviderDisplayName } from "#app/lib/auth-endpoints.ts";
+import { cn } from "#app/lib/utils.ts";
 import type { Config } from "#app/models/config.ts";
 import { StepIndicator } from "#app/pages/bootstrap/StepIndicator.tsx";
 
@@ -23,6 +29,23 @@ export function AdminUserStep({
   config,
 }: AdminUserStepProps): React.ReactElement {
   const provider = config.auth.providers[0];
+
+  // Check for error in URL (from OAuth callback)
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const errorParam = params.get("error");
+      if (errorParam) {
+        setError(errorParam);
+        // Clean up URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete("error");
+        window.history.replaceState({}, "", url.pathname);
+      }
+    }
+  }, []);
 
   if (!provider) {
     return (
@@ -55,6 +78,14 @@ export function AdminUserStep({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Authentication Failed</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
           <Alert>
             <AlertDescription>
               The first user to sign in will become the administrator of this
@@ -67,10 +98,10 @@ export function AdminUserStep({
               Click the button below to sign in with your configured provider.
             </p>
 
-            <Button size="lg" render={<a href={authUrl} />}>
+            <a href={authUrl} className={cn(buttonVariants({ size: "lg" }))}>
               <KeyRound className="mr-2 h-5 w-5" />
               Sign in with {providerName}
-            </Button>
+            </a>
           </div>
 
           <div className="border-t pt-4">

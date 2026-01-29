@@ -91,12 +91,21 @@ export const Config = v.object({
     providers: v.array(AuthProvider),
   }),
 
+  /** Service configuration */
+  service: v.object({
+    /**
+     * Host for the service dashboard & API.
+     * Example: "dotunnel.example.com"
+     */
+    host: v.string(),
+  }),
+
   /** Tunnel configuration */
   tunnel: v.object({
     /**
      * Wildcard host pattern for tunnel endpoints.
-     * Example: "*.mytunnel.io"
-     * Used to distinguish tunnel requests from service requests.
+     * Example: "*.tunnel.io"
+     * This is independent from the service host.
      */
     hostPattern: v.string(),
   }),
@@ -118,6 +127,9 @@ export function createDefaultConfig(): Config {
     auth: {
       providers: [],
     },
+    service: {
+      host: "",
+    },
     tunnel: {
       hostPattern: "",
     },
@@ -126,7 +138,7 @@ export function createDefaultConfig(): Config {
 
 /**
  * Check if a hostname matches the tunnel host pattern.
- * Example: "api.mytunnel.io" matches "*.mytunnel.io"
+ * Example: "api.tunnel.io" matches "*.tunnel.io"
  */
 export function isTunnelHost(hostname: string, pattern: string): boolean {
   if (!pattern.startsWith("*.")) {
@@ -135,11 +147,18 @@ export function isTunnelHost(hostname: string, pattern: string): boolean {
 
   const baseDomain = pattern.slice(2); // Remove "*."
 
-  // Exact match of base domain is NOT a tunnel (it's the service)
+  // Check if hostname ends with the base domain and has a subdomain
+  // e.g., "foo.tunnel.io" matches "*.tunnel.io", but "tunnel.io" does not
   if (hostname === baseDomain) {
     return false;
   }
 
-  // Check if hostname ends with the base domain and has a subdomain
   return hostname.endsWith(`.${baseDomain}`);
+}
+
+/**
+ * Check if a hostname is the service host.
+ */
+export function isServiceHost(hostname: string, serviceHost: string): boolean {
+  return hostname === serviceHost;
 }
