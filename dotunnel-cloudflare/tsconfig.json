@@ -7,6 +7,7 @@
     "jsx": "react-jsx",
     "resolveJsonModule": true,
     "types": [
+      "node",
       "./worker-configuration.d.ts",
       "./types/css.d.ts",
       "./types/rwsdk.d.ts",

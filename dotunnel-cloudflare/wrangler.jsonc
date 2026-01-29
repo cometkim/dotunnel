@@ -15,8 +15,9 @@
     {
       "binding": "DB",
       "database_name": "dotunnel",
-      "preview_database_id": "dotunnel-preview",
-      "migrations_dir": "./migrations"
+      "database_id": "ddbe641b-daa8-4c83-ac53-b89dc79ee3e9",
+      "preview_database_id": "45d065a6-50ca-4784-a9e8-ab70fecaeac4",
+      "migrations_dir": "./src/migrations"
     }
   ],
   "r2_buckets": [
@@ -30,5 +31,6 @@
     "bindings": []
   },
   "migrations": [],
-  "vars": {}
+  "vars": {
+  }
 }

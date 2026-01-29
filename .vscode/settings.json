@@ -1,0 +1,10 @@
+{
+  "sqltools.connections": [
+    {
+      "previewLimit": 100,
+      "driver": "SQLite",
+      "database": "${workspaceFolder:dotunnel}/dotunnel-cloudflare/.wrangler/state/v3/d1/miniflare-D1DatabaseObject/8d7e6d62230d4fd324773d712f682c2cbb6e14a6574eb3571fa9fdfcd12214e5.sqlite",
+      "name": "miniflare"
+    }
+  ]
+}
