@@ -67,13 +67,13 @@ export function TunnelList({
 
     const result = await createTunnel(input);
 
-    if (result.success) {
-      setTunnels((prev) => [result.data, ...prev]);
+    if (result.isOk()) {
+      setTunnels((prev) => [result.value, ...prev]);
       setShowCreateForm(false);
       setSubdomain("");
       setTunnelName("");
     } else {
-      setError(result.error);
+      setError(result.error.message);
     }
 
     setIsCreating(false);
@@ -89,10 +89,10 @@ export function TunnelList({
 
     const result = await deleteTunnel(publicId);
 
-    if (result.success) {
+    if (result.isOk()) {
       setTunnels((prev) => prev.filter((t) => t.publicId !== publicId));
     } else {
-      setError(result.error);
+      setError(result.error.message);
     }
 
     setDeletingId(null);
@@ -115,9 +115,9 @@ export function TunnelList({
       const result = await isSubdomainAvailable(value);
       setCheckingSubdomain(false);
 
-      if (!result.success) {
-        setSubdomainError(result.error);
-      } else if (!result.data.available) {
+      if (result.isErr()) {
+        setSubdomainError(result.error.message);
+      } else if (!result.value.available) {
         setSubdomainError("This subdomain is already taken");
       } else {
         setSubdomainError(null);

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.1.0",
+    "better-result": "^2.6.0",
     "capnp-es": "^0.0.14",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

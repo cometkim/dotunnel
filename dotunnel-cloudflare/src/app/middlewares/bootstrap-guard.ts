@@ -86,7 +86,7 @@ export function bootstrapGuard(): RouteMiddleware {
     try {
       configCtx = await loadConfig(isDev);
     } catch (error) {
-      if (error instanceof NotBootstrappedError) {
+      if (NotBootstrappedError.is(error)) {
         // No config exists yet
         if (!isBootstrapRoute) {
           return Response.redirect(new URL("/_bootstrap", request.url), 302);

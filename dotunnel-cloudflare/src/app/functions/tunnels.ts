@@ -1,9 +1,19 @@
 "use server";
 
 import { env } from "cloudflare:workers";
+import { Result } from "better-result";
 import { getRequestInfo } from "rwsdk/worker";
 import * as v from "valibot";
 import { loadConfig } from "#app/lib/db.ts";
+import {
+  AuthRequiredError,
+  ConflictError,
+  DatabaseError,
+  type NotFoundError,
+  PermissionError,
+  type TunnelError,
+  ValidationError,
+} from "#app/lib/errors.ts";
 import {
   buildTunnelUrl,
   CreateTunnelInput,
@@ -17,27 +27,19 @@ import {
 import type { AppContext } from "#worker.tsx";
 
 // =============================================================================
-// Types
-// =============================================================================
-
-export type TunnelResult<T = void> =
-  | { success: true; data: T }
-  | { success: false; error: string };
-
-// =============================================================================
 // Helpers
 // =============================================================================
 
 /**
  * Get current user ID from request context.
- * Throws if user is not authenticated.
+ * Returns Result with AuthRequiredError if user is not authenticated.
  */
-function requireUserId(): number {
+function requireUserId(): Result<number, AuthRequiredError> {
   const { ctx } = getRequestInfo() as { ctx: AppContext };
   if (!ctx.user) {
-    throw new Error("Authentication required");
+    return Result.err(new AuthRequiredError());
   }
-  return ctx.user.id;
+  return Result.ok(ctx.user.id);
 }
 
 /**
@@ -124,38 +126,34 @@ export async function getTunnel(
  */
 export async function isSubdomainAvailable(
   subdomain: string,
-): Promise<TunnelResult<{ available: boolean }>> {
-  try {
+): Promise<Result<{ available: boolean }, ValidationError | DatabaseError>> {
+  return Result.gen(async function* () {
     // Validate subdomain format first
     const parseResult = v.safeParse(SubdomainSchema, subdomain);
     if (!parseResult.success) {
-      return {
-        success: false,
-        error: parseResult.issues[0]?.message ?? "Invalid subdomain format",
-      };
+      return Result.err(
+        new ValidationError({
+          field: "subdomain",
+          message: parseResult.issues[0]?.message ?? "Invalid subdomain format",
+        }),
+      );
     }
 
     const normalizedSubdomain = parseResult.output;
 
-    const existing = await env.DB.prepare(
-      `SELECT 1 FROM tunnels WHERE subdomain = ?1`,
-    )
-      .bind(normalizedSubdomain)
-      .first();
+    const existing = yield* Result.await(
+      Result.tryPromise({
+        try: () =>
+          env.DB.prepare(`SELECT 1 FROM tunnels WHERE subdomain = ?1`)
+            .bind(normalizedSubdomain)
+            .first(),
+        catch: (e) =>
+          new DatabaseError({ operation: "check subdomain", cause: e }),
+      }),
+    );
 
-    return {
-      success: true,
-      data: { available: !existing },
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to check subdomain availability",
-    };
-  }
+    return Result.ok({ available: !existing });
+  });
 }
 
 // =============================================================================
@@ -167,16 +165,12 @@ export async function isSubdomainAvailable(
  */
 export async function createTunnel(
   input: unknown,
-): Promise<TunnelResult<TunnelDisplay>> {
-  try {
-    const userId = requireUserId();
-    return createTunnelForUser(userId, input);
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to create tunnel",
-    };
-  }
+): Promise<Result<TunnelDisplay, TunnelError>> {
+  return Result.gen(async function* () {
+    const userId = yield* requireUserId();
+    const tunnel = yield* Result.await(createTunnelForUser(userId, input));
+    return Result.ok(tunnel);
+  });
 }
 
 /**
@@ -186,15 +180,16 @@ export async function createTunnel(
 export async function createTunnelForUser(
   userId: number,
   input: unknown,
-): Promise<TunnelResult<TunnelDisplay>> {
-  try {
+): Promise<Result<TunnelDisplay, TunnelError>> {
+  return Result.gen(async function* () {
     // Validate input
     const parseResult = v.safeParse(CreateTunnelInput, input);
     if (!parseResult.success) {
-      return {
-        success: false,
-        error: parseResult.issues[0]?.message ?? "Invalid input",
-      };
+      return Result.err(
+        new ValidationError({
+          message: parseResult.issues[0]?.message ?? "Invalid input",
+        }),
+      );
     }
 
     const validInput = parseResult.output;
@@ -207,10 +202,12 @@ export async function createTunnelForUser(
       // Generate unique subdomain for ephemeral tunnel
       const generated = await generateUniqueSubdomain();
       if (!generated) {
-        return {
-          success: false,
-          error: "Failed to generate unique subdomain, please try again",
-        };
+        return Result.err(
+          new ConflictError({
+            resource: "subdomain",
+            message: "Failed to generate unique subdomain, please try again",
+          }),
+        );
       }
       subdomain = generated;
     } else {
@@ -218,34 +215,59 @@ export async function createTunnelForUser(
       subdomain = validInput.subdomain;
 
       // Check availability
-      const existing = await env.DB.prepare(
-        `SELECT 1 FROM tunnels WHERE subdomain = ?1`,
-      )
-        .bind(subdomain)
-        .first();
+      const existing = yield* Result.await(
+        Result.tryPromise({
+          try: () =>
+            env.DB.prepare(`SELECT 1 FROM tunnels WHERE subdomain = ?1`)
+              .bind(subdomain)
+              .first(),
+          catch: (e) =>
+            new DatabaseError({ operation: "check subdomain", cause: e }),
+        }),
+      );
 
       if (existing) {
-        return {
-          success: false,
-          error: "This subdomain is already taken",
-        };
+        return Result.err(
+          new ConflictError({
+            resource: "subdomain",
+            message: "This subdomain is already taken",
+          }),
+        );
       }
     }
 
     // Insert tunnel
-    await env.DB.prepare(
-      `INSERT INTO tunnels (public_id, user_id, subdomain, type, name, status, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, 'offline', ?6, ?6)`,
-    )
-      .bind(
-        publicId,
-        userId,
-        subdomain,
-        validInput.type,
-        validInput.name ?? null,
-        now,
-      )
-      .run();
+    yield* Result.await(
+      Result.tryPromise({
+        try: () =>
+          env.DB.prepare(
+            `INSERT INTO tunnels (public_id, user_id, subdomain, type, name, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'offline', ?6, ?6)`,
+          )
+            .bind(
+              publicId,
+              userId,
+              subdomain,
+              validInput.type,
+              validInput.name ?? null,
+              now,
+            )
+            .run(),
+        catch: (e) => {
+          // Handle unique constraint violation
+          if (
+            e instanceof Error &&
+            e.message.includes("UNIQUE constraint failed")
+          ) {
+            return new ConflictError({
+              resource: "subdomain",
+              message: "This subdomain is already taken",
+            });
+          }
+          return new DatabaseError({ operation: "create tunnel", cause: e });
+        },
+      }),
+    );
 
     // Fetch the created tunnel
     const [tunnelResult, configResult] = await Promise.all([
@@ -256,39 +278,22 @@ export async function createTunnelForUser(
     ]);
 
     if (!tunnelResult) {
-      return {
-        success: false,
-        error: "Failed to retrieve created tunnel",
-      };
+      return Result.err(
+        new DatabaseError({
+          operation: "retrieve tunnel",
+          cause: new Error("Failed to retrieve created tunnel"),
+        }),
+      );
     }
 
     const hostPattern = configResult.config.tunnel.hostPattern;
     const tunnel = tunnelFromRow(tunnelResult);
 
-    return {
-      success: true,
-      data: {
-        ...tunnel,
-        url: buildTunnelUrl(tunnel.subdomain, hostPattern),
-      },
-    };
-  } catch (error) {
-    // Handle unique constraint violation
-    if (
-      error instanceof Error &&
-      error.message.includes("UNIQUE constraint failed")
-    ) {
-      return {
-        success: false,
-        error: "This subdomain is already taken",
-      };
-    }
-
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to create tunnel",
-    };
-  }
+    return Result.ok({
+      ...tunnel,
+      url: buildTunnelUrl(tunnel.subdomain, hostPattern),
+    });
+  });
 }
 
 /**
@@ -296,29 +301,31 @@ export async function createTunnelForUser(
  */
 export async function deleteTunnel(
   publicId: string,
-): Promise<TunnelResult<void>> {
-  try {
-    const userId = requireUserId();
-    const result = await env.DB.prepare(
-      `DELETE FROM tunnels WHERE public_id = ?1 AND user_id = ?2`,
-    )
-      .bind(publicId, userId)
-      .run();
+): Promise<Result<void, TunnelError>> {
+  return Result.gen(async function* () {
+    const userId = yield* requireUserId();
+
+    const result = yield* Result.await(
+      Result.tryPromise({
+        try: () =>
+          env.DB.prepare(
+            `DELETE FROM tunnels WHERE public_id = ?1 AND user_id = ?2`,
+          )
+            .bind(publicId, userId)
+            .run(),
+        catch: (e) =>
+          new DatabaseError({ operation: "delete tunnel", cause: e }),
+      }),
+    );
 
     if (result.meta.changes === 0) {
-      return {
-        success: false,
-        error: "Tunnel not found or you don't have permission to delete it",
-      };
+      return Result.err(
+        new PermissionError({ action: "delete", resource: "tunnel" }),
+      );
     }
 
-    return { success: true, data: undefined };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to delete tunnel",
-    };
-  }
+    return Result.ok(undefined);
+  });
 }
 
 /**
@@ -328,30 +335,31 @@ export async function updateTunnelName(
   userId: number,
   publicId: string,
   name: string | null,
-): Promise<TunnelResult<void>> {
-  try {
+): Promise<Result<void, NotFoundError | PermissionError | DatabaseError>> {
+  return Result.gen(async function* () {
     const now = new Date().toISOString();
 
-    const result = await env.DB.prepare(
-      `UPDATE tunnels SET name = ?1, updated_at = ?2 WHERE public_id = ?3 AND user_id = ?4`,
-    )
-      .bind(name, now, publicId, userId)
-      .run();
+    const result = yield* Result.await(
+      Result.tryPromise({
+        try: () =>
+          env.DB.prepare(
+            `UPDATE tunnels SET name = ?1, updated_at = ?2 WHERE public_id = ?3 AND user_id = ?4`,
+          )
+            .bind(name, now, publicId, userId)
+            .run(),
+        catch: (e) =>
+          new DatabaseError({ operation: "update tunnel", cause: e }),
+      }),
+    );
 
     if (result.meta.changes === 0) {
-      return {
-        success: false,
-        error: "Tunnel not found or you don't have permission to update it",
-      };
+      return Result.err(
+        new PermissionError({ action: "update", resource: "tunnel" }),
+      );
     }
 
-    return { success: true, data: undefined };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to update tunnel",
-    };
-  }
+    return Result.ok(undefined);
+  });
 }
 
 // =============================================================================

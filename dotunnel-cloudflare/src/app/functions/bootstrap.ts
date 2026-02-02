@@ -53,7 +53,7 @@ export async function getBootstrapState(): Promise<BootstrapState> {
     const result = await loadConfigFromDatabase();
     config = result.config;
   } catch (error) {
-    if (error instanceof NotBootstrappedError) {
+    if (NotBootstrappedError.is(error)) {
       // No config exists, start fresh
       config = createDefaultConfig();
     } else {
@@ -141,7 +141,7 @@ export async function saveAuthProvider(
       const result = await loadConfigFromDatabase();
       config = result.config;
     } catch (error) {
-      if (error instanceof NotBootstrappedError) {
+      if (NotBootstrappedError.is(error)) {
         config = createDefaultConfig();
       } else {
         throw error;

@@ -47,7 +47,7 @@ export function SessionsPageClient({
     setError(null);
 
     const result = await deleteSession(publicId);
-    if (result.success) {
+    if (result.isOk()) {
       if (publicId === currentSessionId) {
         window.location.href = "/_auth/logout";
       } else if (isCli) {
@@ -64,7 +64,7 @@ export function SessionsPageClient({
         setSessions((prev) => prev.filter((s) => s.publicId !== publicId));
       }
     } else {
-      setError(result.error);
+      setError(result.error.message);
     }
     setIsDeleting(null);
   };

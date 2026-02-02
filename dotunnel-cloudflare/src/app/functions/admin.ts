@@ -1,6 +1,7 @@
 "use server";
 
 import { env } from "cloudflare:workers";
+import { Result } from "better-result";
 import {
   fetchOIDCDiscovery,
   type OIDCDiscoveryDocument,
@@ -12,15 +13,12 @@ import {
   loadConfig,
   saveConfig,
 } from "#app/lib/db.ts";
+import { DatabaseError, ValidationError } from "#app/lib/errors.ts";
 import type { AuthProvider, Config } from "#app/models/config.ts";
 
 // =============================================================================
 // Types
 // =============================================================================
-
-export type ConfigSaveResult =
-  | { success: true; config: Config; configBase64: string }
-  | { success: false; error: string };
 
 export type AdminDashboardData = {
   config: ConfigContext;
@@ -112,42 +110,54 @@ export async function getConfigData(): Promise<{
  */
 export async function saveFullConfig(
   config: Config,
-): Promise<ConfigSaveResult> {
-  try {
+): Promise<
+  Result<
+    { config: Config; configBase64: string },
+    ValidationError | DatabaseError
+  >
+> {
+  return Result.gen(async function* () {
     // Validate
     if (!config.service.host) {
-      return { success: false, error: "Service host is required" };
+      return Result.err(
+        new ValidationError({
+          field: "service.host",
+          message: "Service host is required",
+        }),
+      );
     }
     if (
       config.tunnel.hostPattern &&
       !config.tunnel.hostPattern.startsWith("*.")
     ) {
-      return {
-        success: false,
-        error: "Tunnel host pattern must start with '*.' ",
-      };
+      return Result.err(
+        new ValidationError({
+          field: "tunnel.hostPattern",
+          message: "Tunnel host pattern must start with '*.'",
+        }),
+      );
     }
     if (config.auth.providers.length === 0) {
-      return {
-        success: false,
-        error: "At least one auth provider is required",
-      };
+      return Result.err(
+        new ValidationError({
+          field: "auth.providers",
+          message: "At least one auth provider is required",
+        }),
+      );
     }
 
-    await saveConfig(config);
+    yield* Result.await(
+      Result.tryPromise({
+        try: () => saveConfig(config),
+        catch: (e) => new DatabaseError({ operation: "save config", cause: e }),
+      }),
+    );
 
-    return {
-      success: true,
+    return Result.ok({
       config,
       configBase64: exportConfigAsBase64(config),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to save configuration",
-    };
-  }
+    });
+  });
 }
 
 /**
@@ -158,36 +168,46 @@ export async function updateHostsConfig(
   serviceHost: string,
   tunnelHostPattern: string,
 ): Promise<
-  | { success: true; config: Config; configBase64: string }
-  | { success: false; error: string }
+  Result<
+    { config: Config; configBase64: string },
+    ValidationError | DatabaseError
+  >
 > {
-  try {
+  return Result.gen(async function* () {
     if (!serviceHost) {
-      return { success: false, error: "Service host is required" };
+      return Result.err(
+        new ValidationError({
+          field: "serviceHost",
+          message: "Service host is required",
+        }),
+      );
     }
     if (!tunnelHostPattern.startsWith("*.")) {
-      return {
-        success: false,
-        error: "Tunnel host pattern must start with '*.'",
-      };
+      return Result.err(
+        new ValidationError({
+          field: "tunnelHostPattern",
+          message: "Tunnel host pattern must start with '*.'",
+        }),
+      );
     }
 
     const result = await loadConfig(import.meta.env.DEV);
     result.config.service.host = serviceHost;
     result.config.tunnel.hostPattern = tunnelHostPattern;
-    await saveConfig(result.config);
 
-    return {
-      success: true,
+    yield* Result.await(
+      Result.tryPromise({
+        try: () => saveConfig(result.config),
+        catch: (e) =>
+          new DatabaseError({ operation: "update hosts config", cause: e }),
+      }),
+    );
+
+    return Result.ok({
       config: result.config,
       configBase64: exportConfigAsBase64(result.config),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to update",
-    };
-  }
+    });
+  });
 }
 
 /**
@@ -200,10 +220,12 @@ export async function updateConfig(
     tunnelHostPattern: string;
   }>,
 ): Promise<
-  | { success: true; config: Config; configBase64: string }
-  | { success: false; error: string }
+  Result<
+    { config: Config; configBase64: string },
+    ValidationError | DatabaseError
+  >
 > {
-  try {
+  return Result.gen(async function* () {
     const result = await loadConfig(import.meta.env.DEV);
 
     if (updates.serviceHost !== undefined) {
@@ -214,27 +236,29 @@ export async function updateConfig(
         updates.tunnelHostPattern &&
         !updates.tunnelHostPattern.startsWith("*.")
       ) {
-        return {
-          success: false,
-          error: "Tunnel host pattern must start with '*.'",
-        };
+        return Result.err(
+          new ValidationError({
+            field: "tunnelHostPattern",
+            message: "Tunnel host pattern must start with '*.'",
+          }),
+        );
       }
       result.config.tunnel.hostPattern = updates.tunnelHostPattern;
     }
 
-    await saveConfig(result.config);
+    yield* Result.await(
+      Result.tryPromise({
+        try: () => saveConfig(result.config),
+        catch: (e) =>
+          new DatabaseError({ operation: "update config", cause: e }),
+      }),
+    );
 
-    return {
-      success: true,
+    return Result.ok({
       config: result.config,
       configBase64: exportConfigAsBase64(result.config),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to update",
-    };
-  }
+    });
+  });
 }
 
 // =============================================================================
@@ -254,8 +278,8 @@ export async function getAuthProviders(): Promise<AuthProvider[]> {
  */
 export async function saveAuthProvider(
   provider: AuthProvider,
-): Promise<{ success: true } | { success: false; error: string }> {
-  try {
+): Promise<Result<void, DatabaseError>> {
+  return Result.gen(async function* () {
     const result = await loadConfig(import.meta.env.DEV);
     const existingIndex = result.config.auth.providers.findIndex(
       (p) => p.id === provider.id,
@@ -267,14 +291,16 @@ export async function saveAuthProvider(
       result.config.auth.providers.push(provider);
     }
 
-    await saveConfig(result.config);
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to save provider",
-    };
-  }
+    yield* Result.await(
+      Result.tryPromise({
+        try: () => saveConfig(result.config),
+        catch: (e) =>
+          new DatabaseError({ operation: "save auth provider", cause: e }),
+      }),
+    );
+
+    return Result.ok(undefined);
+  });
 }
 
 /**
@@ -282,21 +308,23 @@ export async function saveAuthProvider(
  */
 export async function deleteAuthProvider(
   providerId: string,
-): Promise<{ success: true } | { success: false; error: string }> {
-  try {
+): Promise<Result<void, DatabaseError>> {
+  return Result.gen(async function* () {
     const result = await loadConfig(import.meta.env.DEV);
     result.config.auth.providers = result.config.auth.providers.filter(
       (p) => p.id !== providerId,
     );
-    await saveConfig(result.config);
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to delete provider",
-    };
-  }
+
+    yield* Result.await(
+      Result.tryPromise({
+        try: () => saveConfig(result.config),
+        catch: (e) =>
+          new DatabaseError({ operation: "delete auth provider", cause: e }),
+      }),
+    );
+
+    return Result.ok(undefined);
+  });
 }
 
 /**
@@ -304,19 +332,19 @@ export async function deleteAuthProvider(
  */
 export async function discoverOIDCEndpoints(
   issuer: string,
-): Promise<
-  | { success: true; discovery: OIDCDiscoveryDocument }
-  | { success: false; error: string }
-> {
-  try {
-    const discovery = await fetchOIDCDiscovery(issuer);
-    return { success: true, discovery };
-  } catch (error) {
-    if (error instanceof OIDCDiscoveryError) {
-      return { success: false, error: error.message };
-    }
-    return { success: false, error: "Failed to fetch OIDC discovery" };
-  }
+): Promise<Result<OIDCDiscoveryDocument, OIDCDiscoveryError | DatabaseError>> {
+  return Result.tryPromise({
+    try: () => fetchOIDCDiscovery(issuer),
+    catch: (e) => {
+      if (e instanceof OIDCDiscoveryError) {
+        return e;
+      }
+      return new DatabaseError({
+        operation: "fetch OIDC discovery",
+        cause: e,
+      });
+    },
+  });
 }
 
 /**
@@ -324,11 +352,8 @@ export async function discoverOIDCEndpoints(
  */
 export async function addAuthProvider(
   provider: AuthProvider,
-): Promise<
-  | { success: true; config: Config; configBase64: string }
-  | { success: false; error: string }
-> {
-  try {
+): Promise<Result<{ config: Config; configBase64: string }, DatabaseError>> {
+  return Result.gen(async function* () {
     const result = await loadConfig(import.meta.env.DEV);
 
     // Check for duplicate
@@ -341,18 +366,19 @@ export async function addAuthProvider(
       result.config.auth.providers.push(provider);
     }
 
-    await saveConfig(result.config);
-    return {
-      success: true,
+    yield* Result.await(
+      Result.tryPromise({
+        try: () => saveConfig(result.config),
+        catch: (e) =>
+          new DatabaseError({ operation: "add auth provider", cause: e }),
+      }),
+    );
+
+    return Result.ok({
       config: result.config,
       configBase64: exportConfigAsBase64(result.config),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to add provider",
-    };
-  }
+    });
+  });
 }
 
 // =============================================================================
@@ -391,16 +417,13 @@ export async function getUsers(): Promise<AdminUser[]> {
  */
 export async function deleteUser(
   userId: number,
-): Promise<{ success: true } | { success: false; error: string }> {
-  try {
-    await env.DB.prepare("DELETE FROM users WHERE id = ?1").bind(userId).run();
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to delete user",
-    };
-  }
+): Promise<Result<void, DatabaseError>> {
+  const result = await Result.tryPromise({
+    try: () =>
+      env.DB.prepare("DELETE FROM users WHERE id = ?1").bind(userId).run(),
+    catch: (e) => new DatabaseError({ operation: "delete user", cause: e }),
+  });
+  return result.map(() => undefined);
 }
 
 // =============================================================================
@@ -455,36 +478,50 @@ export async function getSessions(): Promise<AdminSession[]> {
  */
 export async function deleteSession(
   publicId: string,
-): Promise<{ success: true } | { success: false; error: string }> {
-  try {
+): Promise<Result<void, DatabaseError>> {
+  return Result.gen(async function* () {
     // Check if it's a CLI session
-    const session = await env.DB.prepare(
-      "SELECT type FROM sessions WHERE public_id = ?1",
-    )
-      .bind(publicId)
-      .first<{ type: string | null }>();
+    const session = yield* Result.await(
+      Result.tryPromise({
+        try: () =>
+          env.DB.prepare("SELECT type FROM sessions WHERE public_id = ?1")
+            .bind(publicId)
+            .first<{ type: string | null }>(),
+        catch: (e) =>
+          new DatabaseError({ operation: "get session type", cause: e }),
+      }),
+    );
 
     if (session?.type === "cli") {
       // Soft delete CLI sessions
-      await env.DB.prepare(
-        "UPDATE sessions SET revoked_at = ?1 WHERE public_id = ?2",
-      )
-        .bind(new Date().toISOString(), publicId)
-        .run();
+      yield* Result.await(
+        Result.tryPromise({
+          try: () =>
+            env.DB.prepare(
+              "UPDATE sessions SET revoked_at = ?1 WHERE public_id = ?2",
+            )
+              .bind(new Date().toISOString(), publicId)
+              .run(),
+          catch: (e) =>
+            new DatabaseError({ operation: "revoke session", cause: e }),
+        }),
+      );
     } else {
       // Hard delete browser sessions
-      await env.DB.prepare("DELETE FROM sessions WHERE public_id = ?1")
-        .bind(publicId)
-        .run();
+      yield* Result.await(
+        Result.tryPromise({
+          try: () =>
+            env.DB.prepare("DELETE FROM sessions WHERE public_id = ?1")
+              .bind(publicId)
+              .run(),
+          catch: (e) =>
+            new DatabaseError({ operation: "delete session", cause: e }),
+        }),
+      );
     }
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to delete session",
-    };
-  }
+
+    return Result.ok(undefined);
+  });
 }
 
 /**
@@ -492,17 +529,14 @@ export async function deleteSession(
  */
 export async function deleteUserSessions(
   userId: number,
-): Promise<{ success: true } | { success: false; error: string }> {
-  try {
-    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?1")
-      .bind(userId)
-      .run();
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error:
-        error instanceof Error ? error.message : "Failed to delete sessions",
-    };
-  }
+): Promise<Result<void, DatabaseError>> {
+  const result = await Result.tryPromise({
+    try: () =>
+      env.DB.prepare("DELETE FROM sessions WHERE user_id = ?1")
+        .bind(userId)
+        .run(),
+    catch: (e) =>
+      new DatabaseError({ operation: "delete user sessions", cause: e }),
+  });
+  return result.map(() => undefined);
 }

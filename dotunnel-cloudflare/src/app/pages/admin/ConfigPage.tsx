@@ -183,13 +183,13 @@ export function ConfigPageClient({
     setError(null);
 
     const result = await discoverOIDCEndpoints(issuer);
-    if (result.success) {
-      setAuthorizationEndpoint(result.discovery.authorization_endpoint);
-      setTokenEndpoint(result.discovery.token_endpoint);
-      setUserinfoEndpoint(result.discovery.userinfo_endpoint ?? "");
-      setJwksUri(result.discovery.jwks_uri);
+    if (result.isOk()) {
+      setAuthorizationEndpoint(result.value.authorization_endpoint);
+      setTokenEndpoint(result.value.token_endpoint);
+      setUserinfoEndpoint(result.value.userinfo_endpoint ?? "");
+      setJwksUri(result.value.jwks_uri);
     } else {
-      setError(result.error);
+      setError(result.error.message);
     }
     setIsFetchingDiscovery(false);
   };
@@ -257,11 +257,11 @@ export function ConfigPageClient({
     setSuccess(null);
 
     const result = await saveFullConfig(currentConfig);
-    if (result.success) {
-      setSavedConfig(result.config);
+    if (result.isOk()) {
+      setSavedConfig(result.value.config);
       setSuccess("Configuration saved successfully");
     } else {
-      setError(result.error);
+      setError(result.error.message);
     }
     setIsSaving(false);
   };

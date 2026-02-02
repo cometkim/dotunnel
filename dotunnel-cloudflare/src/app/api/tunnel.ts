@@ -146,16 +146,16 @@ async function handleTunnelSelection(
   } else {
     // Create ephemeral tunnel
     const result = await createTunnelForUser(userId, { type: "ephemeral" });
-    if (!result.success) {
+    if (result.isErr()) {
       return Response.json(
         {
-          error: result.error,
+          error: result.error.message,
           code: "tunnel_creation_failed",
         } satisfies ErrorResponse,
         { status: 400 },
       );
     }
-    tunnel = result.data;
+    tunnel = result.value;
   }
 
   const tunnelUrl = buildTunnelUrl(tunnel.subdomain, config.tunnel.hostPattern);

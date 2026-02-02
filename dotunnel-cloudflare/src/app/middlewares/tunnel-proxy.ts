@@ -58,7 +58,7 @@ export function tunnelProxy(): RouteMiddleware {
       const result = await loadConfig(import.meta.env.DEV);
       config = result.config;
     } catch (error) {
-      if (error instanceof NotBootstrappedError) {
+      if (NotBootstrappedError.is(error)) {
         // Not bootstrapped yet - can't proxy tunnels
         return;
       }

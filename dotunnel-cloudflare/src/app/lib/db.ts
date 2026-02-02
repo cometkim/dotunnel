@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { Buffer } from "node:buffer";
 import * as v from "valibot";
 
+import { NotBootstrappedError } from "#app/lib/errors.ts";
 import { Config } from "#app/models/config.ts";
 
 export type MigrationStatus = {
@@ -15,12 +16,8 @@ export type ConfigContext = {
   source: "static" | "database";
 };
 
-export class NotBootstrappedError extends Error {
-  name = "NotBootstrappedError";
-  constructor() {
-    super("Service is not bootstrapped");
-  }
-}
+// Re-export for backwards compatibility
+export { NotBootstrappedError } from "#app/lib/errors.ts";
 
 /**
  * Check if D1 migrations have been applied.
@@ -132,7 +129,7 @@ export async function getBootstrapStatus(
     }
     return { bootstrapped: false, config: null };
   } catch (error) {
-    if (error instanceof NotBootstrappedError) {
+    if (NotBootstrappedError.is(error)) {
       return { bootstrapped: false, config: null };
     }
     throw error;
