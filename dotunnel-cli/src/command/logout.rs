@@ -9,7 +9,7 @@ pub struct Args {
     force: bool,
 }
 
-pub async fn execute(args: &Args, profile: &str) -> Result<()> {
+pub fn execute(args: &Args, profile: &str) -> Result<()> {
     let mut credentials = Credentials::load().unwrap_or_default();
 
     let creds = match credentials.get_profile(profile) {
@@ -24,23 +24,19 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     if !args.force {
         let config = Config::load().unwrap_or_default();
         if let Some(profile_config) = config.get_profile(profile) {
-            let client = reqwest::Client::new();
+            let agent = ureq::Agent::new_with_defaults();
             let logout_url = format!("{}/_api/logout", profile_config.service_url);
 
-            match client
+            match agent
                 .post(&logout_url)
-                .header("Authorization", format!("Bearer {}", creds.token))
-                .send()
-                .await
+                .header("Authorization", &format!("Bearer {}", creds.token))
+                .send_empty()
             {
                 Ok(response) => {
-                    if response.status().is_success() {
+                    if response.status() == 200 {
                         tracing::debug!("Token revoked on server");
                     } else {
-                        tracing::debug!(
-                            "Failed to revoke token on server: {}",
-                            response.status()
-                        );
+                        tracing::debug!("Failed to revoke token on server: {}", response.status());
                     }
                 }
                 Err(e) => {

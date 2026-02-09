@@ -16,7 +16,7 @@ struct UserInfo {
     image: Option<String>,
 }
 
-pub async fn execute(_args: &Args, profile: &str) -> Result<()> {
+pub fn execute(_args: &Args, profile: &str) -> Result<()> {
     let credentials = Credentials::load().unwrap_or_default();
     let config = Config::load().unwrap_or_default();
 
@@ -43,17 +43,16 @@ pub async fn execute(_args: &Args, profile: &str) -> Result<()> {
     println!();
 
     // Fetch user info from server
-    let client = reqwest::Client::new();
+    let agent = ureq::Agent::new_with_defaults();
     let user_url = format!("{}/_api/user", profile_config.service_url);
 
-    let response = client
+    let response = agent
         .get(&user_url)
-        .header("Authorization", format!("Bearer {}", creds.token))
-        .send()
-        .await
+        .header("Authorization", &format!("Bearer {}", creds.token))
+        .call()
         .context("Failed to fetch user info")?;
 
-    if !response.status().is_success() {
+    if response.status() != 200 {
         if response.status() == 401 {
             println!("Your session has expired or been revoked.");
             println!();
@@ -61,14 +60,14 @@ pub async fn execute(_args: &Args, profile: &str) -> Result<()> {
             return Ok(());
         }
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = response.into_body().read_to_string().unwrap_or_default();
         println!("Failed to fetch user info: {} - {}", status, body);
         return Ok(());
     }
 
     let user: UserInfo = response
-        .json()
-        .await
+        .into_body()
+        .read_json()
         .context("Failed to parse user info")?;
 
     println!("Logged in as:");

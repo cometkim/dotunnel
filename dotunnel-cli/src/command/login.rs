@@ -1,8 +1,7 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::thread;
 use std::time::Duration;
-use std::sync::Arc;
-use reqwest_hickory_resolver::HickoryResolver;
 
 use crate::config::{Config, Credentials, ProfileConfig, ProfileCredentials};
 
@@ -59,7 +58,7 @@ struct TokenRequest {
     client_id: String,
 }
 
-pub async fn execute(args: &Args, profile: &str) -> Result<()> {
+pub fn execute(args: &Args, profile: &str) -> Result<()> {
     let mut config = Config::load().unwrap_or_default();
 
     // Determine service URL
@@ -72,7 +71,10 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     // Check if already logged in
     let credentials = Credentials::load().unwrap_or_default();
     if credentials.get_profile(profile).is_some() {
-        println!("You are already logged in to profile '{}'. Use 'dotunnel logout' first to log out.", profile);
+        println!(
+            "You are already logged in to profile '{}'. Use 'dotunnel logout' first to log out.",
+            profile
+        );
         return Ok(());
     }
 
@@ -80,30 +82,25 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     println!();
 
     // Step 1: Request device code
-    let resolver = Arc::new(HickoryResolver::default());
-    let client = reqwest::Client::builder()
-        .dns_resolver(resolver)
-        .build()?;
+    let agent = ureq::Agent::new_with_defaults();
     let device_code_url = format!("{}/_api/device/code", service_url);
 
-    let response = client
+    let response = agent
         .post(&device_code_url)
-        .json(&DeviceCodeRequest {
+        .send_json(&DeviceCodeRequest {
             client_id: CLIENT_ID.to_string(),
         })
-        .send()
-        .await
         .context("Failed to request device code")?;
 
-    if !response.status().is_success() {
+    if response.status() != 200 {
         let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        let body = response.into_body().read_to_string().unwrap_or_default();
         bail!("Failed to request device code: {} - {}", status, body);
     }
 
     let device_response: DeviceCodeResponse = response
-        .json()
-        .await
+        .into_body()
+        .read_json()
         .context("Failed to parse device code response")?;
 
     // Display user code and instructions
@@ -111,7 +108,10 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     println!();
     println!("  {}", device_response.verification_uri_complete);
     println!();
-    println!("Or go to {} and enter code:", device_response.verification_uri);
+    println!(
+        "Or go to {} and enter code:",
+        device_response.verification_uri
+    );
     println!();
     println!("  {}", device_response.user_code);
     println!();
@@ -133,22 +133,20 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
             bail!("Device code expired. Please try again.");
         }
 
-        tokio::time::sleep(poll_interval).await;
+        thread::sleep(poll_interval);
 
-        let response = client
+        let response = agent
             .post(&token_url)
-            .json(&TokenRequest {
+            .send_json(&TokenRequest {
                 grant_type: "urn:ietf:params:oauth:grant-type:device_code".to_string(),
                 device_code: device_response.device_code.clone(),
                 client_id: CLIENT_ID.to_string(),
             })
-            .send()
-            .await
             .context("Failed to poll for token")?;
 
         let token_response: TokenResponse = response
-            .json()
-            .await
+            .into_body()
+            .read_json()
             .context("Failed to parse token response")?;
 
         match token_response {
@@ -175,7 +173,10 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
                 println!();
                 println!("Successfully logged in!");
                 println!();
-                println!("Your credentials have been saved to {:?}", Credentials::path());
+                println!(
+                    "Your credentials have been saved to {:?}",
+                    Credentials::path()
+                );
                 return Ok(());
             }
             TokenResponse::Error(error) => {
@@ -187,7 +188,7 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
                     }
                     "slow_down" => {
                         // Slow down polling
-                        tokio::time::sleep(poll_interval).await;
+                        thread::sleep(poll_interval);
                         continue;
                     }
                     "access_denied" => {
@@ -197,7 +198,11 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
                         bail!("Device code expired. Please try again.");
                     }
                     _ => {
-                        bail!("Authorization failed: {} - {}", error.error, error.error_description);
+                        bail!(
+                            "Authorization failed: {} - {}",
+                            error.error,
+                            error.error_description
+                        );
                     }
                 }
             }

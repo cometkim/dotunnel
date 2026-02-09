@@ -4,19 +4,19 @@ use anyhow::{bail, Context, Result};
 use capnp::message::{Builder, ReaderOptions};
 use capnp::serialize_packed;
 use clap::Parser;
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::Cursor;
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::io::{Cursor, Read};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Mutex};
-use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, error, info, warn};
+use tungstenite::protocol::CloseFrame;
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{connect, Message as WsMessage, WebSocket};
 use url::Url;
 
 use crate::config::{Config, Credentials};
@@ -89,7 +89,7 @@ struct PendingRequest {
 
 /// Active WebSocket connection to local server
 struct LocalWebSocket {
-    write_tx: mpsc::UnboundedSender<WsMessage>,
+    write_tx: mpsc::Sender<WsMessage>,
     #[allow(dead_code)]
     stream_id: u32,
 }
@@ -110,10 +110,16 @@ struct StreamState {
 }
 
 // =============================================================================
+// Shared write handle (channel-based to avoid blocking)
+// =============================================================================
+
+type WsWriter = mpsc::Sender<WsMessage>;
+
+// =============================================================================
 // Execution
 // =============================================================================
 
-pub async fn execute(args: &Args, profile: &str) -> Result<()> {
+pub fn execute(args: &Args, profile: &str) -> Result<()> {
     // Load config and credentials
     let config = Config::load()?;
     let credentials = Credentials::load()?;
@@ -132,8 +138,8 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     let token = creds.token.clone();
 
     // Resolve hostname to socket address
-    let local_addr: SocketAddr = tokio::net::lookup_host(format!("{}:{}", args.host, args.port))
-        .await
+    let local_addr: SocketAddr = format!("{}:{}", args.host, args.port)
+        .to_socket_addrs()
         .context("Failed to resolve local address")?
         .next()
         .context("No addresses found for local host")?;
@@ -145,11 +151,11 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     loop {
         if !first_connect {
             info!("Reconnecting in {} ms...", backoff_ms);
-            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            thread::sleep(Duration::from_millis(backoff_ms));
         }
         first_connect = false;
 
-        match connect_and_run(&service_url, &token, &args.subdomain, local_addr).await {
+        match connect_and_run(&service_url, &token, &args.subdomain, local_addr) {
             Ok(()) => {
                 // Graceful shutdown
                 info!("Tunnel closed gracefully");
@@ -169,7 +175,7 @@ pub async fn execute(args: &Args, profile: &str) -> Result<()> {
     Ok(())
 }
 
-async fn connect_and_run(
+fn connect_and_run(
     service_url: &str,
     token: &str,
     subdomain: &Option<String>,
@@ -178,7 +184,7 @@ async fn connect_and_run(
     info!("Connecting to {}...", service_url);
 
     // Step 1: POST to get/create tunnel
-    let client = reqwest::Client::new();
+    let agent = ureq::Agent::new_with_defaults();
     let connect_url = format!("{}/_api/tunnel/connect", service_url);
 
     let body = if let Some(subdomain) = subdomain {
@@ -187,16 +193,14 @@ async fn connect_and_run(
         serde_json::json!({})
     };
 
-    let resp = client
+    let resp = agent
         .post(&connect_url)
-        .header("Authorization", format!("Bearer {}", token))
-        .json(&body)
-        .send()
-        .await
+        .header("Authorization", &format!("Bearer {}", token))
+        .send_json(&body)
         .context("Failed to connect to tunnel service")?;
 
-    if !resp.status().is_success() {
-        let error: ErrorResponse = resp.json().await.unwrap_or(ErrorResponse {
+    if resp.status() != 200 {
+        let error: ErrorResponse = resp.into_body().read_json().unwrap_or(ErrorResponse {
             error: "Unknown error".to_string(),
             code: None,
         });
@@ -204,8 +208,8 @@ async fn connect_and_run(
     }
 
     let tunnel_info: ConnectResponse = resp
-        .json()
-        .await
+        .into_body()
+        .read_json()
         .context("Failed to parse tunnel response")?;
     info!("Tunnel created: {}", tunnel_info.tunnel_url);
 
@@ -218,28 +222,23 @@ async fn connect_and_run(
         tunnel_info.tunnel_id
     );
 
+    let parsed_url = Url::parse(&ws_url)?;
+
     let ws_request = http::Request::builder()
         .uri(&ws_url)
         .header("Authorization", format!("Bearer {}", token))
         .header(
             "Sec-WebSocket-Key",
-            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            tungstenite::handshake::client::generate_key(),
         )
         .header("Sec-WebSocket-Version", "13")
         .header("Connection", "Upgrade")
         .header("Upgrade", "websocket")
-        .header(
-            "Host",
-            Url::parse(service_url)?
-                .host_str()
-                .unwrap_or("localhost"),
-        )
+        .header("Host", parsed_url.host_str().unwrap_or("localhost"))
         .body(())
         .context("Failed to build WebSocket request")?;
 
-    let (ws_stream, _) = connect_async(ws_request)
-        .await
-        .context("Failed to establish WebSocket connection")?;
+    let (ws_stream, _) = connect(ws_request).context("Failed to establish WebSocket connection")?;
 
     println!("\n✓ Tunnel established!");
     println!("  Public URL: {}", tunnel_info.tunnel_url);
@@ -247,86 +246,119 @@ async fn connect_and_run(
     println!("\nPress Ctrl+C to stop the tunnel.\n");
 
     // Run the tunnel
-    run_tunnel(ws_stream, local_addr).await
+    run_tunnel(ws_stream, local_addr)
 }
 
 // =============================================================================
 // Tunnel Runtime
 // =============================================================================
 
-type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
 /// Run the tunnel event loop
-async fn run_tunnel(ws_stream: WsStream, local_addr: SocketAddr) -> Result<()> {
-    let (ws_write, mut ws_read) = ws_stream.split();
-    let ws_write = Arc::new(Mutex::new(ws_write));
+fn run_tunnel(
+    mut ws_stream: WebSocket<MaybeTlsStream<TcpStream>>,
+    local_addr: SocketAddr,
+) -> Result<()> {
+    // Set a short read timeout so the IO loop can interleave reads and writes
+    let read_timeout = Some(Duration::from_millis(50));
+    match ws_stream.get_ref() {
+        MaybeTlsStream::Plain(tcp) => {
+            tcp.set_read_timeout(read_timeout)?;
+        }
+        MaybeTlsStream::NativeTls(tls) => {
+            tls.get_ref().set_read_timeout(read_timeout)?;
+        }
+        _ => {}
+    }
+
+    // Channel for outbound messages — worker threads send here, IO loop writes to WS
+    let (write_tx, write_rx) = mpsc::channel::<WsMessage>();
 
     // Stream state map: streamId -> StreamState
     let streams: Arc<Mutex<HashMap<u32, StreamState>>> = Arc::new(Mutex::new(HashMap::new()));
     let msg_seq_counter = Arc::new(AtomicU32::new(1));
 
-    // Handle incoming messages
+    // Set up Ctrl+C handler
+    let shutdown = Arc::new(AtomicBool::new(false));
+    {
+        let shutdown = shutdown.clone();
+        let write_tx = write_tx.clone();
+        ctrlc::set_handler(move || {
+            info!("Shutting down tunnel...");
+            shutdown.store(true, Ordering::SeqCst);
+            // Send close frame via channel (best effort)
+            let _ = write_tx.send(WsMessage::Close(None));
+        })
+        .context("Failed to set Ctrl+C handler")?;
+    }
+
+    // Single IO loop: interleave reading and writing on the WebSocket
     loop {
-        tokio::select! {
-            msg = ws_read.next() => {
-                match msg {
-                    Some(Ok(WsMessage::Text(text))) => {
-                        debug!("Received text message: {}", text);
-                        // Handle JSON control messages (tunnel_ready, etc.)
-                    }
-                    Some(Ok(WsMessage::Binary(data))) => {
-                        // Decode message synchronously to extract owned data
-                        match decode_binary_message(&data) {
-                            Ok(decoded) => {
-                                // Handle in separate task for concurrent processing
-                                let ws_write = ws_write.clone();
-                                let streams = streams.clone();
-                                let msg_seq_counter = msg_seq_counter.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) = handle_decoded_message(
-                                        decoded,
-                                        local_addr,
-                                        ws_write,
-                                        streams,
-                                        msg_seq_counter,
-                                    ).await {
-                                        error!("Error handling message: {}", e);
-                                    }
-                                });
-                            }
-                            Err(e) => {
-                                error!("Error decoding message: {}", e);
-                            }
-                        }
-                    }
-                    Some(Ok(WsMessage::Ping(data))) => {
-                        debug!("Received ping");
-                        let mut ws = ws_write.lock().await;
-                        let _ = ws.send(WsMessage::Pong(data)).await;
-                    }
-                    Some(Ok(WsMessage::Pong(_))) => {
-                        debug!("Received pong");
-                    }
-                    Some(Ok(WsMessage::Close(frame))) => {
-                        info!("Server closed connection: {:?}", frame);
-                        return Ok(());
-                    }
-                    Some(Ok(WsMessage::Frame(_))) => {
-                        // Raw frame, ignore
-                    }
-                    Some(Err(e)) => {
-                        return Err(anyhow::anyhow!("WebSocket error: {}", e));
-                    }
-                    None => {
-                        return Err(anyhow::anyhow!("WebSocket connection closed unexpectedly"));
-                    }
-                }
+        if shutdown.load(Ordering::SeqCst) {
+            // Drain and send any remaining outbound messages
+            while let Ok(msg) = write_rx.try_recv() {
+                let _ = ws_stream.send(msg);
             }
-            _ = tokio::signal::ctrl_c() => {
-                info!("Shutting down tunnel...");
-                let mut ws = ws_write.lock().await;
-                let _ = ws.close().await;
+            let _ = ws_stream.flush();
+            return Ok(());
+        }
+
+        // 1) Drain all pending outbound messages
+        while let Ok(msg) = write_rx.try_recv() {
+            ws_stream.send(msg)?;
+        }
+
+        // 2) Try to read next message (will timeout after ~50ms if nothing)
+        match ws_stream.read() {
+            Ok(msg) => match msg {
+                WsMessage::Text(text) => {
+                    debug!("Received text message: {}", text);
+                }
+                WsMessage::Binary(data) => match decode_binary_message(&data) {
+                    Ok(decoded) => {
+                        dispatch_message(
+                            decoded,
+                            local_addr,
+                            &write_tx,
+                            &streams,
+                            &msg_seq_counter,
+                        );
+                    }
+                    Err(e) => {
+                        error!("Error decoding message: {}", e);
+                    }
+                },
+                WsMessage::Ping(data) => {
+                    debug!("Received ping");
+                    ws_stream.send(WsMessage::Pong(data))?;
+                }
+                WsMessage::Pong(_) => {
+                    debug!("Received pong");
+                }
+                WsMessage::Close(frame) => {
+                    info!("Server closed connection: {:?}", frame);
+                    return Ok(());
+                }
+                WsMessage::Frame(_) => {}
+            },
+            Err(tungstenite::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // Read timeout — not an error, just no data yet
+                continue;
+            }
+            Err(tungstenite::Error::ConnectionClosed) => {
+                info!("Server closed connection");
                 return Ok(());
+            }
+            Err(tungstenite::Error::AlreadyClosed) => {
+                return Ok(());
+            }
+            Err(e) => {
+                if shutdown.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                return Err(anyhow::anyhow!("WebSocket error: {}", e));
             }
         }
     }
@@ -405,16 +437,19 @@ fn decode_binary_message(data: &[u8]) -> Result<DecodedMessage> {
                         let value = String::from_utf8_lossy(value_bytes).to_string();
                         headers.push((name, value));
                     }
-                    DecodedHttpMessage::RequestInit { method, uri, headers, has_body }
+                    DecodedHttpMessage::RequestInit {
+                        method,
+                        uri,
+                        headers,
+                        has_body,
+                    }
                 }
                 message_capnp::http_message::Which::RequestBodyChunk(chunk) => {
                     let chunk = chunk?;
                     let data = chunk.get_data()?.to_vec();
                     DecodedHttpMessage::RequestBodyChunk { data }
                 }
-                message_capnp::http_message::Which::RequestEnd(_) => {
-                    DecodedHttpMessage::RequestEnd
-                }
+                message_capnp::http_message::Which::RequestEnd(_) => DecodedHttpMessage::RequestEnd,
                 message_capnp::http_message::Which::RequestAbort(abort) => {
                     let abort = abort?;
                     let reason = abort.get_reason()? as i16;
@@ -422,14 +457,27 @@ fn decode_binary_message(data: &[u8]) -> Result<DecodedMessage> {
                 }
                 _ => return Err(anyhow::anyhow!("Unexpected HTTP message type")),
             };
-            Ok(DecodedMessage::Http { stream_id, connection_id, http: decoded_http })
+            Ok(DecodedMessage::Http {
+                stream_id,
+                connection_id,
+                http: decoded_http,
+            })
         }
         message_capnp::envelope::Which::Ws(ws) => {
             let ws = ws?;
             let opcode = ws.get_opcode()? as u16;
             let payload = ws.get_payload()?.to_vec();
-            let close_code = if opcode == 8 { Some(ws.get_close_code()) } else { None };
-            Ok(DecodedMessage::Ws { stream_id, opcode, payload, close_code })
+            let close_code = if opcode == 8 {
+                Some(ws.get_close_code())
+            } else {
+                None
+            };
+            Ok(DecodedMessage::Ws {
+                stream_id,
+                opcode,
+                payload,
+                close_code,
+            })
         }
         message_capnp::envelope::Which::Control(control) => {
             let control = control?;
@@ -456,118 +504,156 @@ fn decode_binary_message(data: &[u8]) -> Result<DecodedMessage> {
                     return Err(anyhow::anyhow!("FlowWindowUpdate not implemented"));
                 }
             };
-            Ok(DecodedMessage::Control { connection_id, control: decoded_control })
+            Ok(DecodedMessage::Control {
+                connection_id,
+                control: decoded_control,
+            })
         }
     }
 }
 
-/// Handle decoded message (async, can be spawned)
-async fn handle_decoded_message(
+/// Dispatch a decoded message: fast operations run inline, slow I/O spawns a thread.
+fn dispatch_message(
     msg: DecodedMessage,
     local_addr: SocketAddr,
-    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
-    streams: Arc<Mutex<HashMap<u32, StreamState>>>,
-    msg_seq_counter: Arc<AtomicU32>,
-) -> Result<()> {
+    ws_write: &WsWriter,
+    streams: &Arc<Mutex<HashMap<u32, StreamState>>>,
+    msg_seq_counter: &Arc<AtomicU32>,
+) {
     match msg {
-        DecodedMessage::Http { stream_id, connection_id, http } => {
-            handle_decoded_http(stream_id, connection_id, http, local_addr, ws_write, streams, msg_seq_counter).await?;
-        }
-        DecodedMessage::Ws { stream_id, opcode, payload, close_code } => {
-            debug!("Stream {}: Received WebSocket frame (opcode: {})", stream_id, opcode);
-            let mut streams_guard = streams.lock().await;
-            handle_ws_frame(stream_id, opcode, &payload, close_code, &mut streams_guard);
-        }
-        DecodedMessage::Control { connection_id, control } => {
-            handle_decoded_control(connection_id, control, ws_write).await?;
-        }
-    }
-    Ok(())
-}
-
-/// Handle decoded HTTP message
-async fn handle_decoded_http(
-    stream_id: u32,
-    connection_id: u64,
-    http: DecodedHttpMessage,
-    local_addr: SocketAddr,
-    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
-    streams: Arc<Mutex<HashMap<u32, StreamState>>>,
-    msg_seq_counter: Arc<AtomicU32>,
-) -> Result<()> {
-    match http {
-        DecodedHttpMessage::RequestInit { method, uri, headers, has_body } => {
-            debug!("Stream {}: {} {} (hasBody: {})", stream_id, method, uri, has_body);
-
-            // Check if this is a WebSocket upgrade request
-            let is_websocket = headers.iter().any(|(name, value)| {
-                name.eq_ignore_ascii_case("upgrade") && value.eq_ignore_ascii_case("websocket")
-            });
-
-            if is_websocket {
-                debug!("Stream {}: WebSocket upgrade request", stream_id);
-                handle_websocket_upgrade(
-                    stream_id,
-                    connection_id,
-                    local_addr,
-                    &uri,
-                    &headers,
-                    ws_write.clone(),
-                    streams.clone(),
-                    msg_seq_counter.clone(),
-                ).await?;
-            } else {
-                // Store pending HTTP request
-                let mut streams_guard = streams.lock().await;
-                streams_guard.insert(
-                    stream_id,
-                    StreamState {
-                        stream_type: StreamType::Http {
-                            pending_request: Some(PendingRequest {
-                                method,
-                                uri,
-                                headers,
-                                body_chunks: vec![],
-                                has_body,
-                            }),
-                        },
-                    },
+        DecodedMessage::Http {
+            stream_id,
+            connection_id,
+            http,
+        } => match http {
+            // Fast path: just store data in the streams map (inline)
+            DecodedHttpMessage::RequestInit {
+                method,
+                uri,
+                headers,
+                has_body,
+            } => {
+                debug!(
+                    "Stream {}: {} {} (hasBody: {})",
+                    stream_id, method, uri, has_body
                 );
-            }
-        }
-        DecodedHttpMessage::RequestBodyChunk { data } => {
-            let mut streams_guard = streams.lock().await;
-            if let Some(state) = streams_guard.get_mut(&stream_id) {
-                if let StreamType::Http { pending_request: Some(pending) } = &mut state.stream_type {
-                    pending.body_chunks.push(data);
+
+                let is_websocket = headers.iter().any(|(name, value)| {
+                    name.eq_ignore_ascii_case("upgrade") && value.eq_ignore_ascii_case("websocket")
+                });
+
+                if is_websocket {
+                    debug!("Stream {}: WebSocket upgrade request", stream_id);
+                    // WebSocket upgrade does blocking I/O — spawn a thread
+                    let ws_write = ws_write.clone();
+                    let streams = streams.clone();
+                    let msg_seq_counter = msg_seq_counter.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = handle_websocket_upgrade(
+                            stream_id,
+                            connection_id,
+                            local_addr,
+                            &uri,
+                            &headers,
+                            ws_write,
+                            streams,
+                            msg_seq_counter,
+                        ) {
+                            error!("Stream {}: WebSocket upgrade error: {}", stream_id, e);
+                        }
+                    });
+                } else {
+                    let mut streams_guard = streams.lock().unwrap();
+                    streams_guard.insert(
+                        stream_id,
+                        StreamState {
+                            stream_type: StreamType::Http {
+                                pending_request: Some(PendingRequest {
+                                    method,
+                                    uri,
+                                    headers,
+                                    body_chunks: vec![],
+                                    has_body,
+                                }),
+                            },
+                        },
+                    );
                 }
             }
+            // Fast path: append body data (inline)
+            DecodedHttpMessage::RequestBodyChunk { data } => {
+                let mut streams_guard = streams.lock().unwrap();
+                if let Some(state) = streams_guard.get_mut(&stream_id) {
+                    if let StreamType::Http {
+                        pending_request: Some(pending),
+                    } = &mut state.stream_type
+                    {
+                        pending.body_chunks.push(data);
+                    }
+                }
+            }
+            // Slow path: forward to local server — spawn a thread
+            DecodedHttpMessage::RequestEnd => {
+                debug!("Stream {}: request end", stream_id);
+                let ws_write = ws_write.clone();
+                let streams = streams.clone();
+                let msg_seq_counter = msg_seq_counter.clone();
+                thread::spawn(move || {
+                    if let Err(e) = process_request(
+                        stream_id,
+                        connection_id,
+                        local_addr,
+                        ws_write,
+                        streams,
+                        msg_seq_counter,
+                    ) {
+                        error!("Stream {}: Error processing request: {}", stream_id, e);
+                    }
+                });
+            }
+            DecodedHttpMessage::RequestAbort { reason } => {
+                warn!("Stream {}: request aborted: {}", stream_id, reason);
+                let mut streams_guard = streams.lock().unwrap();
+                streams_guard.remove(&stream_id);
+            }
+        },
+        DecodedMessage::Ws {
+            stream_id,
+            opcode,
+            payload,
+            close_code,
+        } => {
+            debug!(
+                "Stream {}: Received WebSocket frame (opcode: {})",
+                stream_id, opcode
+            );
+            let mut streams_guard = streams.lock().unwrap();
+            handle_ws_frame(stream_id, opcode, &payload, close_code, &mut streams_guard);
         }
-        DecodedHttpMessage::RequestEnd => {
-            debug!("Stream {}: request end", stream_id);
-            process_request(stream_id, connection_id, local_addr, ws_write, streams, msg_seq_counter).await?;
-        }
-        DecodedHttpMessage::RequestAbort { reason } => {
-            warn!("Stream {}: request aborted: {}", stream_id, reason);
-            let mut streams_guard = streams.lock().await;
-            streams_guard.remove(&stream_id);
+        DecodedMessage::Control {
+            connection_id,
+            control,
+        } => {
+            if let Err(e) = handle_decoded_control(connection_id, control, ws_write.clone()) {
+                error!("Error handling control message: {}", e);
+            }
         }
     }
-    Ok(())
 }
 
 /// Handle decoded control message
-async fn handle_decoded_control(
+fn handle_decoded_control(
     connection_id: u64,
     control: DecodedControlMessage,
-    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
+    ws_write: WsWriter,
 ) -> Result<()> {
     match control {
         DecodedControlMessage::Ping { data } => {
             debug!("Received control ping");
             let pong = encode_control_pong(connection_id, &data);
-            let mut ws = ws_write.lock().await;
-            ws.send(WsMessage::Binary(pong.into())).await?;
+            ws_write
+                .send(WsMessage::Binary(pong.into()))
+                .context("Failed to send control pong")?;
         }
         DecodedControlMessage::Pong => {
             debug!("Received control pong");
@@ -582,18 +668,18 @@ async fn handle_decoded_control(
     Ok(())
 }
 
-/// Process a complete request and send response
-async fn process_request(
+/// Process a complete request and stream response back
+fn process_request(
     stream_id: u32,
     connection_id: u64,
     local_addr: SocketAddr,
-    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
+    ws_write: WsWriter,
     streams: Arc<Mutex<HashMap<u32, StreamState>>>,
     msg_seq_counter: Arc<AtomicU32>,
 ) -> Result<()> {
     // Extract request data
     let request = {
-        let mut streams = streams.lock().await;
+        let mut streams = streams.lock().unwrap();
         if let Some(state) = streams.get_mut(&stream_id) {
             if let StreamType::Http { pending_request } = &mut state.stream_type {
                 pending_request.take()
@@ -612,58 +698,85 @@ async fn process_request(
     // Concatenate body chunks
     let body: Vec<u8> = request.body_chunks.into_iter().flatten().collect();
 
-    // Forward to local server
-    let result = forward_to_local(
+    // Forward to local server and stream back
+    let result = forward_to_local_streaming(
         local_addr,
         &request.method,
         &request.uri,
         request.headers,
         body,
-    )
-    .await;
+    );
 
     match result {
-        Ok((status, headers, body)) => {
-            // Batch all response messages and send them together
-            let mut ws = ws_write.lock().await;
-            
-            // Send response init
-            let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
-            let response_init =
-                encode_response_init(connection_id, stream_id, msg_seq, status, &headers, !body.is_empty());
-            ws.feed(WsMessage::Binary(response_init.into())).await?;
+        Ok(mut resp) => {
+            let status = resp.status().as_u16();
+            let resp_headers: Vec<(String, String)> = resp
+                .headers()
+                .iter()
+                .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
+                .collect();
 
-            // Send body if any
-            if !body.is_empty() {
-                let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
-                let body_chunk =
-                    encode_response_body_chunk(connection_id, stream_id, msg_seq, &body, 0, true);
-                ws.feed(WsMessage::Binary(body_chunk.into())).await?;
-            }
-
-            // Send response end
+            // Send response init immediately
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
-            let response_end = encode_response_end(connection_id, stream_id, msg_seq);
-            ws.feed(WsMessage::Binary(response_end.into())).await?;
-            
-            // Flush all messages at once
-            ws.flush().await?;
-            drop(ws);
+            let response_init = encode_response_init(
+                connection_id,
+                stream_id,
+                msg_seq,
+                status,
+                &resp_headers,
+                true, // assume body exists, ResponseEnd will close it
+            );
+            ws_write.send(WsMessage::Binary(response_init.into()))?;
 
             info!(
                 "Stream {}: {} {} -> {}",
                 stream_id, request.method, request.uri, status
             );
+
+            // Stream body chunks
+            let mut reader = resp.body_mut().as_reader();
+            let mut buf = [0u8; 16384];
+            let mut chunk_seq: u32 = 0;
+
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(n) => {
+                        let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
+                        let body_chunk = encode_response_body_chunk(
+                            connection_id,
+                            stream_id,
+                            msg_seq,
+                            &buf[..n],
+                            chunk_seq,
+                            false,
+                        );
+                        ws_write.send(WsMessage::Binary(body_chunk.into()))?;
+                        chunk_seq += 1;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // Non-blocking read returned no data, yield briefly
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("Stream {}: Error reading response body: {}", stream_id, e);
+                        break;
+                    }
+                }
+            }
+
+            // Send response end
+            let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
+            let response_end = encode_response_end(connection_id, stream_id, msg_seq);
+            ws_write.send(WsMessage::Binary(response_end.into()))?;
         }
         Err(e) => {
             // Send error response
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_init =
                 encode_response_init(connection_id, stream_id, msg_seq, 502, &[], true);
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(response_init.into())).await?;
-            }
+            ws_write.send(WsMessage::Binary(response_init.into()))?;
 
             let error_body = format!("Bad Gateway: {}", e);
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
@@ -675,17 +788,11 @@ async fn process_request(
                 0,
                 true,
             );
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(body_chunk.into())).await?;
-            }
+            ws_write.send(WsMessage::Binary(body_chunk.into()))?;
 
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_end = encode_response_end(connection_id, stream_id, msg_seq);
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(response_end.into())).await?;
-            }
+            ws_write.send(WsMessage::Binary(response_end.into()))?;
 
             warn!(
                 "Stream {}: {} {} -> 502 ({})",
@@ -696,7 +803,7 @@ async fn process_request(
 
     // Clean up stream
     {
-        let mut streams = streams.lock().await;
+        let mut streams = streams.lock().unwrap();
         streams.remove(&stream_id);
     }
 
@@ -708,79 +815,84 @@ async fn process_request(
 // =============================================================================
 
 /// Handle WebSocket upgrade request - connect to local WS server and start proxying
-async fn handle_websocket_upgrade(
+fn handle_websocket_upgrade(
     stream_id: u32,
     connection_id: u64,
     local_addr: SocketAddr,
     uri: &str,
     headers: &[(String, String)],
-    ws_write: Arc<Mutex<futures_util::stream::SplitSink<WsStream, WsMessage>>>,
+    ws_write: WsWriter,
     streams: Arc<Mutex<HashMap<u32, StreamState>>>,
     msg_seq_counter: Arc<AtomicU32>,
 ) -> Result<()> {
     // Build local WebSocket URL
     let local_url = format!("ws://{}{}", local_addr, uri);
-    
+
     // Build WebSocket request with forwarded headers
     let mut request = http::Request::builder()
         .uri(&local_url)
-        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+        .header(
+            "Sec-WebSocket-Key",
+            tungstenite::handshake::client::generate_key(),
+        )
         .header("Sec-WebSocket-Version", "13")
         .header("Connection", "Upgrade")
         .header("Upgrade", "websocket")
         .header("Host", format!("{}", local_addr));
-    
+
     // Forward relevant headers
     for (name, value) in headers {
         let name_lower = name.to_lowercase();
         // Forward protocol negotiation headers
-        if name_lower == "sec-websocket-protocol" 
+        if name_lower == "sec-websocket-protocol"
             || name_lower == "sec-websocket-extensions"
             || name_lower == "origin"
         {
             request = request.header(name.as_str(), value.as_str());
         }
     }
-    
-    let request = request.body(()).context("Failed to build WebSocket request")?;
-    
+
+    let request = request
+        .body(())
+        .context("Failed to build WebSocket request")?;
+
     // Connect to local WebSocket server
-    let local_ws_result = connect_async(request).await;
-    
+    let local_ws_result = connect(request);
+
     match local_ws_result {
         Ok((local_ws, response)) => {
-            info!("Stream {}: Connected to local WebSocket server (status: {})", 
-                  stream_id, response.status());
-            
+            info!(
+                "Stream {}: Connected to local WebSocket server (status: {})",
+                stream_id,
+                response.status()
+            );
+
             // Send successful upgrade response to server
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_headers: Vec<(String, String)> = response
                 .headers()
                 .iter()
-                .filter_map(|(k, v)| {
-                    v.to_str().ok().map(|v| (k.to_string(), v.to_string()))
-                })
+                .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
                 .collect();
-            
+
             let response_init = encode_response_init(
-                connection_id, 
-                stream_id, 
-                msg_seq, 
+                connection_id,
+                stream_id,
+                msg_seq,
                 101, // Switching Protocols
                 &response_headers,
                 false,
             );
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(response_init.into())).await?;
-            }
-            
+            ws_write
+                .send(WsMessage::Binary(response_init.into()))
+                .context("Failed to send WS upgrade response")?;
+
             // Create channel for sending messages to local WebSocket
-            let (local_tx, mut local_rx) = mpsc::unbounded_channel::<WsMessage>();
-            
+            let (local_tx, local_rx) = mpsc::channel::<WsMessage>();
+
             // Store WebSocket state
             {
-                let mut streams_guard = streams.lock().await;
+                let mut streams_guard = streams.lock().unwrap();
                 streams_guard.insert(
                     stream_id,
                     StreamState {
@@ -793,102 +905,107 @@ async fn handle_websocket_upgrade(
                     },
                 );
             }
-            
-            // Split local WebSocket
-            let (mut local_ws_write, mut local_ws_read) = local_ws.split();
-            
-            // Clone references for the tasks
+
+            // Split local WebSocket into read and write by sharing through Arc<Mutex>
+            let local_ws = Arc::new(Mutex::new(local_ws));
+
+            // Clone references for the threads
             let ws_write_clone = ws_write.clone();
             let msg_seq_counter_clone = msg_seq_counter.clone();
             let streams_clone = streams.clone();
-            
-            // Spawn task to forward messages from local WS to server
-            tokio::spawn(async move {
-                while let Some(msg_result) = local_ws_read.next().await {
-                    match msg_result {
-                        Ok(msg) => {
-                            let frame = match &msg {
-                                WsMessage::Text(text) => {
-                                    let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
-                                    encode_ws_frame(
-                                        connection_id,
-                                        stream_id,
-                                        msg_seq,
-                                        1, // Text opcode
-                                        text.as_bytes(),
-                                        None,
-                                    )
-                                }
-                                WsMessage::Binary(data) => {
-                                    let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
-                                    encode_ws_frame(
-                                        connection_id,
-                                        stream_id,
-                                        msg_seq,
-                                        2, // Binary opcode
-                                        data,
-                                        None,
-                                    )
-                                }
-                                WsMessage::Ping(data) => {
-                                    let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
-                                    encode_ws_frame(
-                                        connection_id,
-                                        stream_id,
-                                        msg_seq,
-                                        9, // Ping opcode
-                                        data,
-                                        None,
-                                    )
-                                }
-                                WsMessage::Pong(data) => {
-                                    let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
-                                    encode_ws_frame(
-                                        connection_id,
-                                        stream_id,
-                                        msg_seq,
-                                        10, // Pong opcode
-                                        data,
-                                        None,
-                                    )
-                                }
-                                WsMessage::Close(frame) => {
-                                    let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
-                                    let code = frame.as_ref().map(|f| f.code.into()).unwrap_or(1000u16);
-                                    encode_ws_frame(
-                                        connection_id,
-                                        stream_id,
-                                        msg_seq,
-                                        8, // Close opcode
-                                        &[],
-                                        Some(code),
-                                    )
-                                }
-                                WsMessage::Frame(_) => continue, // Raw frames, skip
-                            };
-                            
-                            let mut ws = ws_write_clone.lock().await;
-                            if ws.send(WsMessage::Binary(frame.into())).await.is_err() {
-                                break;
-                            }
+            let local_ws_read = local_ws.clone();
+            let local_ws_write = local_ws.clone();
+
+            // Spawn thread to forward messages from local WS to server
+            thread::spawn(move || {
+                loop {
+                    let msg = {
+                        let mut ws = local_ws_read.lock().unwrap();
+                        match ws.read() {
+                            Ok(msg) => msg,
+                            Err(_) => break,
                         }
-                        Err(e) => {
-                            debug!("Stream {}: Local WS read error: {}", stream_id, e);
-                            break;
+                    };
+
+                    let frame = match &msg {
+                        WsMessage::Text(text) => {
+                            let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
+                            encode_ws_frame(
+                                connection_id,
+                                stream_id,
+                                msg_seq,
+                                1, // Text opcode
+                                text.as_bytes(),
+                                None,
+                            )
                         }
+                        WsMessage::Binary(data) => {
+                            let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
+                            encode_ws_frame(
+                                connection_id,
+                                stream_id,
+                                msg_seq,
+                                2, // Binary opcode
+                                data,
+                                None,
+                            )
+                        }
+                        WsMessage::Ping(data) => {
+                            let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
+                            encode_ws_frame(
+                                connection_id,
+                                stream_id,
+                                msg_seq,
+                                9, // Ping opcode
+                                data,
+                                None,
+                            )
+                        }
+                        WsMessage::Pong(data) => {
+                            let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
+                            encode_ws_frame(
+                                connection_id,
+                                stream_id,
+                                msg_seq,
+                                10, // Pong opcode
+                                data,
+                                None,
+                            )
+                        }
+                        WsMessage::Close(frame) => {
+                            let msg_seq = msg_seq_counter_clone.fetch_add(1, Ordering::SeqCst);
+                            let code = frame.as_ref().map(|f| f.code.into()).unwrap_or(1000u16);
+                            encode_ws_frame(
+                                connection_id,
+                                stream_id,
+                                msg_seq,
+                                8, // Close opcode
+                                &[],
+                                Some(code),
+                            )
+                        }
+                        WsMessage::Frame(_) => continue, // Raw frames, skip
+                    };
+
+                    if ws_write_clone
+                        .send(WsMessage::Binary(frame.into()))
+                        .is_err()
+                    {
+                        break;
                     }
                 }
-                
+
                 // Clean up stream when local WS closes
-                let mut streams_guard = streams_clone.lock().await;
+                let mut streams_guard = streams_clone.lock().unwrap();
                 streams_guard.remove(&stream_id);
                 debug!("Stream {}: Local WebSocket closed", stream_id);
             });
-            
-            // Spawn task to forward messages from channel to local WS
-            tokio::spawn(async move {
-                while let Some(msg) = local_rx.recv().await {
-                    if local_ws_write.send(msg).await.is_err() {
+
+            // Spawn thread to forward messages from channel to local WS
+            thread::spawn(move || {
+                while let Ok(msg) = local_rx.recv() {
+                    let mut ws = local_ws_write.lock().unwrap();
+                    if ws.send(msg).is_err() {
                         break;
                     }
                 }
@@ -896,8 +1013,11 @@ async fn handle_websocket_upgrade(
         }
         Err(e) => {
             // Failed to connect to local WebSocket server
-            warn!("Stream {}: Failed to connect to local WebSocket: {}", stream_id, e);
-            
+            warn!(
+                "Stream {}: Failed to connect to local WebSocket: {}",
+                stream_id, e
+            );
+
             // Send error response
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_init = encode_response_init(
@@ -908,11 +1028,8 @@ async fn handle_websocket_upgrade(
                 &[],
                 true,
             );
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(response_init.into())).await?;
-            }
-            
+            ws_write.send(WsMessage::Binary(response_init.into()))?;
+
             let error_body = format!("Failed to connect to local WebSocket server: {}", e);
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let body_chunk = encode_response_body_chunk(
@@ -923,20 +1040,14 @@ async fn handle_websocket_upgrade(
                 0,
                 true,
             );
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(body_chunk.into())).await?;
-            }
-            
+            ws_write.send(WsMessage::Binary(body_chunk.into()))?;
+
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_end = encode_response_end(connection_id, stream_id, msg_seq);
-            {
-                let mut ws = ws_write.lock().await;
-                ws.send(WsMessage::Binary(response_end.into())).await?;
-            }
+            ws_write.send(WsMessage::Binary(response_end.into()))?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -952,12 +1063,12 @@ fn handle_ws_frame(
         debug!("Stream {}: No stream found for WS frame", stream_id);
         return;
     };
-    
+
     let StreamType::WebSocket { local_ws } = &state.stream_type else {
         debug!("Stream {}: Stream is not a WebSocket", stream_id);
         return;
     };
-    
+
     let msg = match opcode {
         1 => {
             // Text
@@ -975,11 +1086,9 @@ fn handle_ws_frame(
         }
         8 => {
             // Close
-            WsMessage::Close(close_code.map(|code| {
-                tokio_tungstenite::tungstenite::protocol::CloseFrame {
-                    code: code.into(),
-                    reason: "".into(),
-                }
+            WsMessage::Close(close_code.map(|code| CloseFrame {
+                code: code.into(),
+                reason: "".into(),
             }))
         }
         9 => {
@@ -995,38 +1104,32 @@ fn handle_ws_frame(
             return;
         }
     };
-    
+
     if local_ws.write_tx.send(msg).is_err() {
         debug!("Stream {}: Failed to send to local WebSocket", stream_id);
     }
 }
 
-/// Forward request to local server
-async fn forward_to_local(
+/// Forward request to local server, returning the response for streaming.
+///
+/// Does NOT read the response body — the caller streams it in chunks.
+fn forward_to_local_streaming(
     local_addr: SocketAddr,
     method: &str,
     uri: &str,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
-) -> Result<(u16, Vec<(String, String)>, Vec<u8>)> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        // Don't auto-decompress - forward raw bytes to preserve Content-Encoding
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .no_zstd()
-        .build()?;
-
+) -> Result<http::Response<ureq::Body>> {
     let url = format!("http://{}{}", local_addr, uri);
 
-    let method = method
-        .parse::<reqwest::Method>()
-        .context("Invalid HTTP method")?;
+    // No global timeout — streaming responses (SSE) can last indefinitely.
+    // Individual read timeouts are handled at the chunk-read level.
+    let agent = ureq::Agent::new_with_defaults();
 
-    let mut req = client.request(method, &url);
+    // Build an http::Request manually so we can handle any method uniformly
+    let mut builder = http::Request::builder().method(method).uri(&url);
 
-    for (name, value) in headers {
+    for (name, value) in &headers {
         // Skip hop-by-hop headers and Accept-Encoding
         let name_lower = name.to_lowercase();
         if name_lower == "host"
@@ -1037,32 +1140,26 @@ async fn forward_to_local(
         {
             continue;
         }
-        req = req.header(&name, &value);
+        builder = builder.header(name.as_str(), value.as_str());
     }
-    
+
     // Override Accept-Encoding to prevent local server from compressing.
     // Cloudflare's edge will handle compression for the client.
-    req = req.header("Accept-Encoding", "identity");
+    builder = builder.header("Accept-Encoding", "identity");
 
-    if !body.is_empty() {
-        req = req.body(body);
-    }
+    let resp = if !body.is_empty() {
+        let request = builder.body(body).context("Failed to build request")?;
+        agent
+            .run(request)
+            .context("Failed to forward request to local server")?
+    } else {
+        let request = builder.body(()).context("Failed to build request")?;
+        agent
+            .run(request)
+            .context("Failed to forward request to local server")?
+    };
 
-    let resp = req
-        .send()
-        .await
-        .context("Failed to forward request to local server")?;
-
-    let status = resp.status().as_u16();
-    let headers: Vec<(String, String)> = resp
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-        .collect();
-    
-    let body = resp.bytes().await?.to_vec();
-
-    Ok((status, headers, body))
+    Ok(resp)
 }
 
 // =============================================================================
@@ -1245,7 +1342,7 @@ fn encode_ws_frame(
         ws.set_rsv1(false);
         ws.set_rsv2(false);
         ws.set_rsv3(false);
-        
+
         // Map opcode to enum
         let opcode_enum = match opcode {
             0 => message_capnp::WebSocketOpcode::Continuation,
@@ -1260,7 +1357,7 @@ fn encode_ws_frame(
         ws.set_masked(false);
         ws.set_mask_key(0);
         ws.set_payload(payload);
-        
+
         if let Some(code) = close_code {
             ws.set_close_code(code);
         }

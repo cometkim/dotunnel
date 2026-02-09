@@ -17,27 +17,20 @@ anyhow = "1.0"
 bytes = { version = "1", features = ["serde"] }
 clap = { version = "4.5.4", features = ["derive", "env"] }
 clap-verbosity-flag = "2.2.0"
-config = { version = "0.14", features = ["toml"] }
+ctrlc = { version = "3", features = ["termination"] }
 dirs-sys = "0.4.1"
 dotunnel = { workspace = true }
-futures-util = { version = "0.3", features = ["sink"] }
 http = "1"
-hyper = { version = "1", features = ["full"] }
-hyper-tungstenite = "0.17"
-http-body-util = "0.1"
-hyper-util = { version = "0.1", features = ["full"] }
-mime = "0.3"
+native-tls = "0.2"
 open = "5"
-reqwest = { version = "0.12", features = ["json"] }
-reqwest-hickory-resolver = "0.2"
 serde_json = "1.0"
-tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 toml = "0.8"
+tungstenite = { version = "0.26", features = ["native-tls"] }
+ureq = { version = "3", features = ["json"] }
 url = "2"
 capnp = "0.20"
 

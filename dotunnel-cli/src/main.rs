@@ -53,26 +53,25 @@ fn init_logger_env(verbosity: &Verbosity) {
         .init();
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
     init_logger_env(&cli.verbose);
 
     match &cli.command {
         command::Command::Login(args) => {
-            command::login::execute(args, &cli.profile).await?;
+            command::login::execute(args, &cli.profile)?;
         }
         command::Command::Logout(args) => {
-            command::logout::execute(args, &cli.profile).await?;
+            command::logout::execute(args, &cli.profile)?;
         }
         command::Command::Status(args) => {
-            command::status::execute(args, &cli.profile).await?;
+            command::status::execute(args, &cli.profile)?;
         }
         command::Command::Setup(args) => {
             command::setup::execute(args)?;
         }
         command::Command::Tunnel(args) => {
-            command::tunnel::execute(args, &cli.profile).await?;
+            command::tunnel::execute(args, &cli.profile)?;
         }
     }
 
