@@ -82,7 +82,7 @@ pub fn execute(args: &Args, profile: &str) -> Result<()> {
     println!();
 
     // Step 1: Request device code
-    let agent = ureq::Agent::new_with_defaults();
+    let agent = crate::http_client::agent();
     let device_code_url = format!("{}/_api/device/code", service_url);
 
     let response = agent

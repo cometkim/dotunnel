@@ -32,6 +32,9 @@ import {
   WebSocketOpcode,
 } from "#app/transport/protocol.ts";
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -148,24 +151,23 @@ export class TunnelSession extends DurableObject {
     const url = new URL(request.url);
     const upgrade = request.headers.get("Upgrade");
 
-    console.log(
-      `[TunnelSession] fetch: ${request.method} ${url.pathname} upgrade=${upgrade}`,
-    );
+    console.log("[TunnelSession] fetch", {
+      method: request.method,
+      pathname: url.pathname,
+      upgrade,
+    });
 
     // CLI WebSocket connection
     if (url.pathname === "/_cli/connect" && upgrade === "websocket") {
-      console.log("[TunnelSession] Handling CLI connect");
       return this.handleCliConnect(request);
     }
 
     // Client WebSocket upgrade - tunnel to local server
     if (upgrade === "websocket") {
-      console.log("[TunnelSession] Handling client WebSocket upgrade");
       return this.handleClientWebSocket(request);
     }
 
     // Regular HTTP request - proxy to CLI
-    console.log("[TunnelSession] Handling HTTP proxy");
     return this.proxyHttpRequest(request);
   }
 
@@ -177,17 +179,18 @@ export class TunnelSession extends DurableObject {
    * Handle CLI WebSocket connection.
    */
   private async handleCliConnect(request: Request): Promise<Response> {
-    console.log("[TunnelSession] handleCliConnect starting");
     const tunnelPublicId = request.headers.get("X-Tunnel-Id");
     const tunnelUrl = request.headers.get("X-Tunnel-Url");
-    console.log(
-      `[TunnelSession] tunnelPublicId=${tunnelPublicId} tunnelUrl=${tunnelUrl}`,
-    );
 
     if (!tunnelPublicId || !tunnelUrl) {
-      console.log("[TunnelSession] Missing metadata, returning 400");
+      console.log("[TunnelSession] handleCliConnect: missing metadata");
       return new Response("Missing tunnel metadata", { status: 400 });
     }
+
+    console.log("[TunnelSession] handleCliConnect", {
+      tunnelPublicId,
+      tunnelUrl,
+    });
 
     // Close existing CLI connection if any (replaced by new connection)
     if (this.cliSocket && this.cliSocket.readyState === WebSocket.OPEN) {
@@ -225,7 +228,6 @@ export class TunnelSession extends DurableObject {
     this.globalMsgSeq = 0;
 
     // Send tunnel info to CLI as JSON (initial handshake)
-    console.log("[TunnelSession] Sending tunnel_ready to CLI");
     server.send(
       JSON.stringify({
         type: "tunnel_ready",
@@ -234,11 +236,11 @@ export class TunnelSession extends DurableObject {
       }),
     );
 
-    // Mark tunnel as online in the database
-    console.log("[TunnelSession] Updating tunnel status in DB");
-    await this.updateTunnelStatusInDb(tunnelPublicId, "online");
+    // Mark tunnel as online in the database (fire-and-forget, don't block 101 response)
+    this.updateTunnelStatusInDb(tunnelPublicId, "online").catch((err) =>
+      console.error("Failed to update tunnel status on connect:", err),
+    );
 
-    console.log("[TunnelSession] Returning 101 response");
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -437,13 +439,13 @@ export class TunnelSession extends DurableObject {
    * If CLI responds with non-101, we close the client WebSocket with an error.
    */
   private async handleClientWebSocket(request: Request): Promise<Response> {
-    console.log(
-      `[TunnelSession] handleClientWebSocket: cliSocket=${!!this.cliSocket} readyState=${this.cliSocket?.readyState}`,
-    );
+    console.log("[TunnelSession] handleClientWebSocket", {
+      cliConnected: !!this.cliSocket,
+      readyState: this.cliSocket?.readyState,
+    });
 
     // Check if CLI is connected
     if (!this.cliSocket || this.cliSocket.readyState !== WebSocket.OPEN) {
-      console.log("[TunnelSession] CLI not connected, returning 502");
       return new Response("Tunnel offline", { status: 502 });
     }
 
@@ -614,12 +616,13 @@ export class TunnelSession extends DurableObject {
               msgSeq: 0,
             });
             this.pendingHttpStreams.delete(streamId);
-            console.log(`Stream ${streamId}: WebSocket upgrade confirmed`);
+            console.log("WebSocket upgrade confirmed", { streamId });
           } else {
             // CLI rejected WebSocket upgrade - close client connection
-            console.log(
-              `Stream ${streamId}: WebSocket upgrade rejected with status ${http.data.status}`,
-            );
+            console.log("WebSocket upgrade rejected", {
+              streamId,
+              status: http.data.status,
+            });
             if (
               stream.pendingWsUpgrade.clientSocket.readyState === WebSocket.OPEN
             ) {
@@ -712,7 +715,7 @@ export class TunnelSession extends DurableObject {
 
     switch (frame.opcode) {
       case WebSocketOpcode.TEXT:
-        socket.send(new TextDecoder().decode(frame.payload));
+        socket.send(textDecoder.decode(frame.payload));
         break;
       case WebSocketOpcode.BINARY:
         socket.send(frame.payload);
@@ -748,12 +751,13 @@ export class TunnelSession extends DurableObject {
         // Heartbeat response - update last seen
         break;
       case "error":
-        console.error(
-          `CLI error: code=${control.code} message=${control.message}`,
-        );
+        console.error("CLI error", {
+          code: control.code,
+          message: control.message,
+        });
         break;
       case "goAway":
-        console.log(`CLI going away: ${control.reason}`);
+        console.log("CLI going away", { reason: control.reason });
         // CLI is gracefully shutting down
         break;
     }
@@ -780,7 +784,7 @@ export class TunnelSession extends DurableObject {
         : WebSocketOpcode.BINARY;
     const payload =
       typeof message === "string"
-        ? new TextEncoder().encode(message)
+        ? textEncoder.encode(message)
         : new Uint8Array(message);
 
     const frame = encodeWebSocketFrame(
@@ -819,7 +823,7 @@ export class TunnelSession extends DurableObject {
    * Handle CLI disconnect.
    */
   private handleCliDisconnect(code: number, reason: string): void {
-    console.log(`CLI disconnected: code=${code} reason=${reason}`);
+    console.log("CLI disconnected", { code, reason });
 
     // Mark tunnel as offline in the database
     if (this.tunnelPublicId) {

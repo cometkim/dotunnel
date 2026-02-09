@@ -43,7 +43,7 @@ pub fn execute(_args: &Args, profile: &str) -> Result<()> {
     println!();
 
     // Fetch user info from server
-    let agent = ureq::Agent::new_with_defaults();
+    let agent = crate::http_client::agent();
     let user_url = format!("{}/_api/user", profile_config.service_url);
 
     let response = agent

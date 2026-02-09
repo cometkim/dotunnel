@@ -5,7 +5,7 @@ use capnp::message::{Builder, ReaderOptions};
 use capnp::serialize_packed;
 use clap::Parser;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::io::{Cursor, Read};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -74,6 +74,89 @@ const MAX_BACKOFF_MS: u64 = 60000;
 const BACKOFF_MULTIPLIER: f64 = 2.0;
 
 // =============================================================================
+// Priority Write Channel
+// =============================================================================
+
+/// Priority levels for outbound messages.
+/// Lower numeric value = higher priority = sent first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WritePriority {
+    /// Control messages (pong, goaway, close) — highest priority
+    Control = 0,
+    /// Response headers and end markers — must not be delayed by body chunks
+    Meta = 1,
+    /// Response body chunks — bulk data, lowest priority
+    Body = 2,
+}
+
+/// A message tagged with priority for the write channel.
+struct PrioritizedMsg {
+    priority: WritePriority,
+    /// Tie-breaker: lower seq = sent first among same priority
+    seq: u64,
+    msg: WsMessage,
+}
+
+impl PartialEq for PrioritizedMsg {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority && self.seq == other.seq
+    }
+}
+
+impl Eq for PrioritizedMsg {}
+
+impl PartialOrd for PrioritizedMsg {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PrioritizedMsg {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // BinaryHeap is a max-heap; we want min-priority first, so reverse.
+        (other.priority as u8, other.seq).cmp(&(self.priority as u8, self.seq))
+    }
+}
+
+/// Sender handle for priority-tagged writes.
+#[derive(Clone)]
+struct PriorityWriter {
+    tx: mpsc::Sender<PrioritizedMsg>,
+    seq: Arc<AtomicU64>,
+}
+
+use std::sync::atomic::AtomicU64;
+
+impl PriorityWriter {
+    fn new(tx: mpsc::Sender<PrioritizedMsg>) -> Self {
+        Self {
+            tx,
+            seq: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn send(&self, priority: WritePriority, msg: WsMessage) -> Result<(), mpsc::SendError<PrioritizedMsg>> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        self.tx.send(PrioritizedMsg { priority, seq, msg })
+    }
+
+    /// Send a control message (highest priority).
+    fn send_control(&self, msg: WsMessage) -> Result<(), mpsc::SendError<PrioritizedMsg>> {
+        self.send(WritePriority::Control, msg)
+    }
+
+    /// Send a response header or end marker.
+    fn send_meta(&self, msg: WsMessage) -> Result<(), mpsc::SendError<PrioritizedMsg>> {
+        self.send(WritePriority::Meta, msg)
+    }
+
+    /// Send a response body chunk (lowest priority).
+    fn send_body(&self, msg: WsMessage) -> Result<(), mpsc::SendError<PrioritizedMsg>> {
+        self.send(WritePriority::Body, msg)
+    }
+}
+
+// =============================================================================
 // Stream State
 // =============================================================================
 
@@ -108,12 +191,6 @@ enum StreamType {
 struct StreamState {
     stream_type: StreamType,
 }
-
-// =============================================================================
-// Shared write handle (channel-based to avoid blocking)
-// =============================================================================
-
-type WsWriter = mpsc::Sender<WsMessage>;
 
 // =============================================================================
 // Execution
@@ -184,7 +261,7 @@ fn connect_and_run(
     info!("Connecting to {}...", service_url);
 
     // Step 1: POST to get/create tunnel
-    let agent = ureq::Agent::new_with_defaults();
+    let agent = crate::http_client::agent();
     let connect_url = format!("{}/_api/tunnel/connect", service_url);
 
     let body = if let Some(subdomain) = subdomain {
@@ -253,25 +330,29 @@ fn connect_and_run(
 // Tunnel Runtime
 // =============================================================================
 
-/// Run the tunnel event loop
+/// Run the tunnel IO loop.
+///
+/// Architecture:
+///   - Single thread owns the WebSocket (required by tungstenite — `read()` may write internally).
+///   - Worker threads send outbound messages through a priority channel.
+///   - The IO loop alternates between draining writes (priority-ordered, batched) and reading.
+///   - Read timeout is 50ms so writes are never stalled for long.
+///   - When truly idle (no writes, no reads), we block on the channel for up to 5ms.
 fn run_tunnel(
     mut ws_stream: WebSocket<MaybeTlsStream<TcpStream>>,
     local_addr: SocketAddr,
 ) -> Result<()> {
-    // Set a short read timeout so the IO loop can interleave reads and writes
-    let read_timeout = Some(Duration::from_millis(50));
-    match ws_stream.get_ref() {
-        MaybeTlsStream::Plain(tcp) => {
-            tcp.set_read_timeout(read_timeout)?;
-        }
-        MaybeTlsStream::NativeTls(tls) => {
-            tls.get_ref().set_read_timeout(read_timeout)?;
-        }
-        _ => {}
-    }
+    // Use a short read timeout so the IO loop stays responsive for writes.
+    // We cannot use non-blocking because tungstenite's read() may internally write
+    // (auto-pong) and a non-blocking write returning WouldBlock breaks it.
+    // Note: very short timeouts (< ~10ms) cause data corruption on macOS with
+    // native-tls because the TLS layer may return TimedOut mid-record.
+    let active_timeout = Some(Duration::from_millis(50));
+    set_read_timeout(&ws_stream, active_timeout)?;
 
-    // Channel for outbound messages — worker threads send here, IO loop writes to WS
-    let (write_tx, write_rx) = mpsc::channel::<WsMessage>();
+    // Priority write channel
+    let (write_tx, write_rx) = mpsc::channel::<PrioritizedMsg>();
+    let writer = PriorityWriter::new(write_tx);
 
     // Stream state map: streamId -> StreamState
     let streams: Arc<Mutex<HashMap<u32, StreamState>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -281,71 +362,39 @@ fn run_tunnel(
     let shutdown = Arc::new(AtomicBool::new(false));
     {
         let shutdown = shutdown.clone();
-        let write_tx = write_tx.clone();
+        let writer = writer.clone();
         ctrlc::set_handler(move || {
             info!("Shutting down tunnel...");
             shutdown.store(true, Ordering::SeqCst);
-            // Send close frame via channel (best effort)
-            let _ = write_tx.send(WsMessage::Close(None));
+            let _ = writer.send_control(WsMessage::Close(None));
         })
         .context("Failed to set Ctrl+C handler")?;
     }
 
-    // Single IO loop: interleave reading and writing on the WebSocket
+    // Re-usable priority heap — avoids per-iteration allocation
+    let mut heap: BinaryHeap<PrioritizedMsg> = BinaryHeap::with_capacity(64);
+
     loop {
         if shutdown.load(Ordering::SeqCst) {
-            // Drain and send any remaining outbound messages
-            while let Ok(msg) = write_rx.try_recv() {
-                let _ = ws_stream.send(msg);
-            }
-            let _ = ws_stream.flush();
+            drain_and_flush(&write_rx, &mut heap, &mut ws_stream);
             return Ok(());
         }
 
-        // 1) Drain all pending outbound messages
-        while let Ok(msg) = write_rx.try_recv() {
-            ws_stream.send(msg)?;
-        }
+        // ── Phase 1: Drain channel into priority heap, write in priority order ──
+        let wrote = drain_and_flush(&write_rx, &mut heap, &mut ws_stream);
 
-        // 2) Try to read next message (will timeout after ~50ms if nothing)
+        // ── Phase 2: Try to read one inbound message (times out after ~50ms) ──
         match ws_stream.read() {
-            Ok(msg) => match msg {
-                WsMessage::Text(text) => {
-                    debug!("Received text message: {}", text);
-                }
-                WsMessage::Binary(data) => match decode_binary_message(&data) {
-                    Ok(decoded) => {
-                        dispatch_message(
-                            decoded,
-                            local_addr,
-                            &write_tx,
-                            &streams,
-                            &msg_seq_counter,
-                        );
-                    }
-                    Err(e) => {
-                        error!("Error decoding message: {}", e);
-                    }
-                },
-                WsMessage::Ping(data) => {
-                    debug!("Received ping");
-                    ws_stream.send(WsMessage::Pong(data))?;
-                }
-                WsMessage::Pong(_) => {
-                    debug!("Received pong");
-                }
-                WsMessage::Close(frame) => {
-                    info!("Server closed connection: {:?}", frame);
-                    return Ok(());
-                }
-                WsMessage::Frame(_) => {}
-            },
+            Ok(msg) => {
+                handle_inbound(msg, local_addr, &writer, &streams, &msg_seq_counter, &mut ws_stream)?;
+                // After reading, immediately loop back to drain writes.
+                continue;
+            }
             Err(tungstenite::Error::Io(ref e))
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                // Read timeout — not an error, just no data yet
-                continue;
+                // No inbound data right now — fall through.
             }
             Err(tungstenite::Error::ConnectionClosed) => {
                 info!("Server closed connection");
@@ -361,7 +410,108 @@ fn run_tunnel(
                 return Err(anyhow::anyhow!("WebSocket error: {}", e));
             }
         }
+
+        // ── Phase 3: Nothing to read and nothing was written — idle wait ──
+        // Block on the channel briefly to avoid busy-spinning at 50ms granularity.
+        if !wrote {
+            match write_rx.recv_timeout(Duration::from_millis(5)) {
+                Ok(msg) => {
+                    heap.push(msg);
+                    // Drain any additional messages that arrived while we waited
+                    while let Ok(m) = write_rx.try_recv() {
+                        heap.push(m);
+                    }
+                    flush_heap(&mut heap, &mut ws_stream);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Idle — loop back and check for inbound data
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Ok(());
+                }
+            }
+        }
     }
+}
+
+/// Set the read timeout on the underlying TCP stream.
+fn set_read_timeout(ws: &WebSocket<MaybeTlsStream<TcpStream>>, timeout: Option<Duration>) -> Result<()> {
+    match ws.get_ref() {
+        MaybeTlsStream::Plain(tcp) => tcp.set_read_timeout(timeout)?,
+        MaybeTlsStream::NativeTls(tls) => tls.get_ref().set_read_timeout(timeout)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Drain all pending messages from the channel into the priority heap,
+/// then send them to the WebSocket in priority order.
+/// Returns true if any messages were written.
+fn drain_and_flush(
+    rx: &mpsc::Receiver<PrioritizedMsg>,
+    heap: &mut BinaryHeap<PrioritizedMsg>,
+    ws: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+) -> bool {
+    while let Ok(m) = rx.try_recv() {
+        heap.push(m);
+    }
+    if heap.is_empty() {
+        return false;
+    }
+    flush_heap(heap, ws);
+    true
+}
+
+/// Send all messages from the heap to the WebSocket in priority order.
+fn flush_heap(
+    heap: &mut BinaryHeap<PrioritizedMsg>,
+    ws: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+) {
+    while let Some(pm) = heap.pop() {
+        if let Err(e) = ws.send(pm.msg) {
+            error!("WebSocket write error: {}", e);
+            heap.clear();
+            return;
+        }
+    }
+}
+
+/// Handle one inbound WebSocket message.
+fn handle_inbound(
+    msg: WsMessage,
+    local_addr: SocketAddr,
+    writer: &PriorityWriter,
+    streams: &Arc<Mutex<HashMap<u32, StreamState>>>,
+    msg_seq_counter: &Arc<AtomicU32>,
+    ws: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+) -> Result<()> {
+    match msg {
+        WsMessage::Text(text) => {
+            debug!("Received text message: {}", text);
+        }
+        WsMessage::Binary(data) => match decode_binary_message(&data) {
+            Ok(decoded) => {
+                dispatch_message(decoded, local_addr, writer, streams, msg_seq_counter);
+            }
+            Err(e) => {
+                error!("Error decoding message: {}", e);
+            }
+        },
+        WsMessage::Ping(_data) => {
+            debug!("Received ping");
+            // Tungstenite auto-queues a pong internally, just flush it out.
+            let _ = ws.flush();
+        }
+        WsMessage::Pong(_) => {
+            debug!("Received pong");
+        }
+        WsMessage::Close(frame) => {
+            info!("Server closed connection: {:?}", frame);
+            return Err(anyhow::anyhow!("server_closed"));
+        }
+        WsMessage::Frame(_) => {}
+    }
+    Ok(())
 }
 
 // =============================================================================
@@ -389,17 +539,17 @@ enum DecodedMessage {
 
 #[derive(Debug)]
 enum DecodedHttpMessage {
-    RequestInit {
+    Init {
         method: String,
         uri: String,
         headers: Vec<(String, String)>,
         has_body: bool,
     },
-    RequestBodyChunk {
+    BodyChunk {
         data: Vec<u8>,
     },
-    RequestEnd,
-    RequestAbort {
+    End,
+    Abort {
         reason: i16,
     },
 }
@@ -437,7 +587,7 @@ fn decode_binary_message(data: &[u8]) -> Result<DecodedMessage> {
                         let value = String::from_utf8_lossy(value_bytes).to_string();
                         headers.push((name, value));
                     }
-                    DecodedHttpMessage::RequestInit {
+                    DecodedHttpMessage::Init {
                         method,
                         uri,
                         headers,
@@ -447,13 +597,13 @@ fn decode_binary_message(data: &[u8]) -> Result<DecodedMessage> {
                 message_capnp::http_message::Which::RequestBodyChunk(chunk) => {
                     let chunk = chunk?;
                     let data = chunk.get_data()?.to_vec();
-                    DecodedHttpMessage::RequestBodyChunk { data }
+                    DecodedHttpMessage::BodyChunk { data }
                 }
-                message_capnp::http_message::Which::RequestEnd(_) => DecodedHttpMessage::RequestEnd,
+                message_capnp::http_message::Which::RequestEnd(_) => DecodedHttpMessage::End,
                 message_capnp::http_message::Which::RequestAbort(abort) => {
                     let abort = abort?;
                     let reason = abort.get_reason()? as i16;
-                    DecodedHttpMessage::RequestAbort { reason }
+                    DecodedHttpMessage::Abort { reason }
                 }
                 _ => return Err(anyhow::anyhow!("Unexpected HTTP message type")),
             };
@@ -516,7 +666,7 @@ fn decode_binary_message(data: &[u8]) -> Result<DecodedMessage> {
 fn dispatch_message(
     msg: DecodedMessage,
     local_addr: SocketAddr,
-    ws_write: &WsWriter,
+    writer: &PriorityWriter,
     streams: &Arc<Mutex<HashMap<u32, StreamState>>>,
     msg_seq_counter: &Arc<AtomicU32>,
 ) {
@@ -527,7 +677,7 @@ fn dispatch_message(
             http,
         } => match http {
             // Fast path: just store data in the streams map (inline)
-            DecodedHttpMessage::RequestInit {
+            DecodedHttpMessage::Init {
                 method,
                 uri,
                 headers,
@@ -545,7 +695,7 @@ fn dispatch_message(
                 if is_websocket {
                     debug!("Stream {}: WebSocket upgrade request", stream_id);
                     // WebSocket upgrade does blocking I/O — spawn a thread
-                    let ws_write = ws_write.clone();
+                    let writer = writer.clone();
                     let streams = streams.clone();
                     let msg_seq_counter = msg_seq_counter.clone();
                     thread::spawn(move || {
@@ -555,7 +705,7 @@ fn dispatch_message(
                             local_addr,
                             &uri,
                             &headers,
-                            ws_write,
+                            writer,
                             streams,
                             msg_seq_counter,
                         ) {
@@ -581,21 +731,20 @@ fn dispatch_message(
                 }
             }
             // Fast path: append body data (inline)
-            DecodedHttpMessage::RequestBodyChunk { data } => {
+            DecodedHttpMessage::BodyChunk { data } => {
                 let mut streams_guard = streams.lock().unwrap();
-                if let Some(state) = streams_guard.get_mut(&stream_id) {
-                    if let StreamType::Http {
+                if let Some(state) = streams_guard.get_mut(&stream_id)
+                    && let StreamType::Http {
                         pending_request: Some(pending),
                     } = &mut state.stream_type
-                    {
-                        pending.body_chunks.push(data);
-                    }
+                {
+                    pending.body_chunks.push(data);
                 }
             }
             // Slow path: forward to local server — spawn a thread
-            DecodedHttpMessage::RequestEnd => {
+            DecodedHttpMessage::End => {
                 debug!("Stream {}: request end", stream_id);
-                let ws_write = ws_write.clone();
+                let writer = writer.clone();
                 let streams = streams.clone();
                 let msg_seq_counter = msg_seq_counter.clone();
                 thread::spawn(move || {
@@ -603,7 +752,7 @@ fn dispatch_message(
                         stream_id,
                         connection_id,
                         local_addr,
-                        ws_write,
+                        writer,
                         streams,
                         msg_seq_counter,
                     ) {
@@ -611,7 +760,7 @@ fn dispatch_message(
                     }
                 });
             }
-            DecodedHttpMessage::RequestAbort { reason } => {
+            DecodedHttpMessage::Abort { reason } => {
                 warn!("Stream {}: request aborted: {}", stream_id, reason);
                 let mut streams_guard = streams.lock().unwrap();
                 streams_guard.remove(&stream_id);
@@ -634,7 +783,7 @@ fn dispatch_message(
             connection_id,
             control,
         } => {
-            if let Err(e) = handle_decoded_control(connection_id, control, ws_write.clone()) {
+            if let Err(e) = handle_decoded_control(connection_id, control, writer.clone()) {
                 error!("Error handling control message: {}", e);
             }
         }
@@ -645,14 +794,14 @@ fn dispatch_message(
 fn handle_decoded_control(
     connection_id: u64,
     control: DecodedControlMessage,
-    ws_write: WsWriter,
+    writer: PriorityWriter,
 ) -> Result<()> {
     match control {
         DecodedControlMessage::Ping { data } => {
             debug!("Received control ping");
             let pong = encode_control_pong(connection_id, &data);
-            ws_write
-                .send(WsMessage::Binary(pong.into()))
+            writer
+                .send_control(WsMessage::Binary(pong.into()))
                 .context("Failed to send control pong")?;
         }
         DecodedControlMessage::Pong => {
@@ -673,7 +822,7 @@ fn process_request(
     stream_id: u32,
     connection_id: u64,
     local_addr: SocketAddr,
-    ws_write: WsWriter,
+    writer: PriorityWriter,
     streams: Arc<Mutex<HashMap<u32, StreamState>>>,
     msg_seq_counter: Arc<AtomicU32>,
 ) -> Result<()> {
@@ -716,7 +865,7 @@ fn process_request(
                 .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
                 .collect();
 
-            // Send response init immediately
+            // Send response init immediately — META priority so it jumps ahead of body chunks
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_init = encode_response_init(
                 connection_id,
@@ -726,14 +875,14 @@ fn process_request(
                 &resp_headers,
                 true, // assume body exists, ResponseEnd will close it
             );
-            ws_write.send(WsMessage::Binary(response_init.into()))?;
+            writer.send_meta(WsMessage::Binary(response_init.into()))?;
 
             info!(
                 "Stream {}: {} {} -> {}",
                 stream_id, request.method, request.uri, status
             );
 
-            // Stream body chunks
+            // Stream body chunks — BODY priority (lowest)
             let mut reader = resp.body_mut().as_reader();
             let mut buf = [0u8; 16384];
             let mut chunk_seq: u32 = 0;
@@ -751,7 +900,7 @@ fn process_request(
                             chunk_seq,
                             false,
                         );
-                        ws_write.send(WsMessage::Binary(body_chunk.into()))?;
+                        writer.send_body(WsMessage::Binary(body_chunk.into()))?;
                         chunk_seq += 1;
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -766,17 +915,17 @@ fn process_request(
                 }
             }
 
-            // Send response end
+            // Send response end — BODY priority so it's sent after all body chunks
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_end = encode_response_end(connection_id, stream_id, msg_seq);
-            ws_write.send(WsMessage::Binary(response_end.into()))?;
+            writer.send_body(WsMessage::Binary(response_end.into()))?;
         }
         Err(e) => {
             // Send error response
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_init =
                 encode_response_init(connection_id, stream_id, msg_seq, 502, &[], true);
-            ws_write.send(WsMessage::Binary(response_init.into()))?;
+            writer.send_meta(WsMessage::Binary(response_init.into()))?;
 
             let error_body = format!("Bad Gateway: {}", e);
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
@@ -788,11 +937,11 @@ fn process_request(
                 0,
                 true,
             );
-            ws_write.send(WsMessage::Binary(body_chunk.into()))?;
+            writer.send_body(WsMessage::Binary(body_chunk.into()))?;
 
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_end = encode_response_end(connection_id, stream_id, msg_seq);
-            ws_write.send(WsMessage::Binary(response_end.into()))?;
+            writer.send_body(WsMessage::Binary(response_end.into()))?;
 
             warn!(
                 "Stream {}: {} {} -> 502 ({})",
@@ -815,13 +964,14 @@ fn process_request(
 // =============================================================================
 
 /// Handle WebSocket upgrade request - connect to local WS server and start proxying
+#[allow(clippy::too_many_arguments)]
 fn handle_websocket_upgrade(
     stream_id: u32,
     connection_id: u64,
     local_addr: SocketAddr,
     uri: &str,
     headers: &[(String, String)],
-    ws_write: WsWriter,
+    writer: PriorityWriter,
     streams: Arc<Mutex<HashMap<u32, StreamState>>>,
     msg_seq_counter: Arc<AtomicU32>,
 ) -> Result<()> {
@@ -883,8 +1033,8 @@ fn handle_websocket_upgrade(
                 &response_headers,
                 false,
             );
-            ws_write
-                .send(WsMessage::Binary(response_init.into()))
+            writer
+                .send_meta(WsMessage::Binary(response_init.into()))
                 .context("Failed to send WS upgrade response")?;
 
             // Create channel for sending messages to local WebSocket
@@ -910,7 +1060,7 @@ fn handle_websocket_upgrade(
             let local_ws = Arc::new(Mutex::new(local_ws));
 
             // Clone references for the threads
-            let ws_write_clone = ws_write.clone();
+            let writer_clone = writer.clone();
             let msg_seq_counter_clone = msg_seq_counter.clone();
             let streams_clone = streams.clone();
             let local_ws_read = local_ws.clone();
@@ -987,8 +1137,8 @@ fn handle_websocket_upgrade(
                         WsMessage::Frame(_) => continue, // Raw frames, skip
                     };
 
-                    if ws_write_clone
-                        .send(WsMessage::Binary(frame.into()))
+                    if writer_clone
+                        .send_meta(WsMessage::Binary(frame.into()))
                         .is_err()
                     {
                         break;
@@ -1028,7 +1178,7 @@ fn handle_websocket_upgrade(
                 &[],
                 true,
             );
-            ws_write.send(WsMessage::Binary(response_init.into()))?;
+            writer.send_meta(WsMessage::Binary(response_init.into()))?;
 
             let error_body = format!("Failed to connect to local WebSocket server: {}", e);
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
@@ -1040,11 +1190,11 @@ fn handle_websocket_upgrade(
                 0,
                 true,
             );
-            ws_write.send(WsMessage::Binary(body_chunk.into()))?;
+            writer.send_body(WsMessage::Binary(body_chunk.into()))?;
 
             let msg_seq = msg_seq_counter.fetch_add(1, Ordering::SeqCst);
             let response_end = encode_response_end(connection_id, stream_id, msg_seq);
-            ws_write.send(WsMessage::Binary(response_end.into()))?;
+            writer.send_body(WsMessage::Binary(response_end.into()))?;
         }
     }
 
@@ -1124,7 +1274,7 @@ fn forward_to_local_streaming(
 
     // No global timeout — streaming responses (SSE) can last indefinitely.
     // Individual read timeouts are handled at the chunk-read level.
-    let agent = ureq::Agent::new_with_defaults();
+    let agent = crate::http_client::agent();
 
     // Build an http::Request manually so we can handle any method uniformly
     let mut builder = http::Request::builder().method(method).uri(&url);

@@ -24,7 +24,7 @@ pub fn execute(args: &Args, profile: &str) -> Result<()> {
     if !args.force {
         let config = Config::load().unwrap_or_default();
         if let Some(profile_config) = config.get_profile(profile) {
-            let agent = ureq::Agent::new_with_defaults();
+            let agent = crate::http_client::agent();
             let logout_url = format!("{}/_api/logout", profile_config.service_url);
 
             match agent

@@ -13,6 +13,45 @@ import type { RouteMiddleware } from "rwsdk/router";
 import { getTunnelBySubdomain } from "#app/functions/tunnels.ts";
 import { loadConfig, NotBootstrappedError } from "#app/lib/db.ts";
 import { isTunnelHost } from "#app/models/config.ts";
+import type { Tunnel } from "#app/models/tunnel.ts";
+
+// =============================================================================
+// Tunnel Lookup Cache
+// =============================================================================
+
+/**
+ * In-memory cache for tunnel lookups (subdomain -> tunnel).
+ *
+ * This avoids a D1 query on every single proxied request. The cache lives
+ * in the Worker isolate and is shared across requests handled by the same
+ * isolate. A short TTL (10s) ensures stale data is refreshed quickly while
+ * eliminating most redundant DB queries under load.
+ *
+ * Cache misses (tunnel not found) are also cached to avoid repeated 404 lookups.
+ */
+const TUNNEL_CACHE_TTL_MS = 10_000;
+
+type TunnelCacheEntry = {
+  tunnel: Tunnel | null;
+  expiresAt: number;
+};
+
+const tunnelCache = new Map<string, TunnelCacheEntry>();
+
+async function getCachedTunnel(subdomain: string): Promise<Tunnel | null> {
+  const now = Date.now();
+  const cached = tunnelCache.get(subdomain);
+  if (cached && cached.expiresAt > now) {
+    return cached.tunnel;
+  }
+
+  const tunnel = await getTunnelBySubdomain(subdomain);
+  tunnelCache.set(subdomain, {
+    tunnel,
+    expiresAt: now + TUNNEL_CACHE_TTL_MS,
+  });
+  return tunnel;
+}
 
 // =============================================================================
 // Helper Functions
@@ -37,20 +76,15 @@ function extractSubdomain(hostname: string, pattern: string): string {
  * Tunnel proxy middleware.
  *
  * - Checks if hostname matches the tunnel wildcard pattern
- * - Looks up tunnel by subdomain in DB
+ * - Looks up tunnel by subdomain (cached)
  * - Routes request to TunnelSession Durable Object
- * - Returns 502 if tunnel is offline
+ * - Returns 502 if tunnel is offline (best-effort check, DO is authoritative)
  * - Returns 404 if tunnel doesn't exist
  */
 export function tunnelProxy(): RouteMiddleware {
   return async ({ request }) => {
     const url = new URL(request.url);
     const hostname = url.hostname;
-    const upgrade = request.headers.get("Upgrade");
-
-    console.log(
-      `[tunnelProxy] ${request.method} ${hostname}${url.pathname} upgrade=${upgrade}`,
-    );
 
     // Try to load config to get tunnel host pattern
     let config: import("#app/models/config.ts").Config | null = null;
@@ -79,8 +113,8 @@ export function tunnelProxy(): RouteMiddleware {
       return new Response("Invalid tunnel URL", { status: 400 });
     }
 
-    // Look up tunnel in DB
-    const tunnel = await getTunnelBySubdomain(subdomain);
+    // Look up tunnel (cached to avoid D1 query per request)
+    const tunnel = await getCachedTunnel(subdomain);
     if (!tunnel) {
       return new Response(
         `Tunnel "${subdomain}" not found.\n\nThis tunnel may have been deleted or never existed.`,
@@ -91,7 +125,8 @@ export function tunnelProxy(): RouteMiddleware {
       );
     }
 
-    // Check if tunnel is online
+    // Check if tunnel is online (best-effort from cached DB state).
+    // The DO itself is authoritative and returns 502 if CLI is not connected.
     if (tunnel.status !== "online") {
       return new Response(
         `Tunnel "${subdomain}" is offline.\n\nThe tunnel owner needs to reconnect using the CLI.`,
@@ -103,12 +138,9 @@ export function tunnelProxy(): RouteMiddleware {
     }
 
     // Route to Durable Object
-    console.log(`[tunnelProxy] Routing to DO for tunnel ${tunnel.publicId}`);
     const doId = env.TUNNEL_SESSION.idFromName(tunnel.publicId);
     const stub = env.TUNNEL_SESSION.get(doId);
 
-    // Forward the original request to the DO
-    console.log(`[tunnelProxy] Forwarding request to DO`);
     return stub.fetch(request);
   };
 }

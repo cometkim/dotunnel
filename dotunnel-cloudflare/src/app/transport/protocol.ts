@@ -28,6 +28,10 @@ export const MAX_CONCURRENT_STREAMS = 100;
 /** Request timeout in milliseconds */
 export const REQUEST_TIMEOUT_MS = 30_000;
 
+/** Module-level TextEncoder/TextDecoder singletons to avoid per-call allocation */
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -144,12 +148,11 @@ export function encodeHttpRequestInit(
   // Convert Headers to Cap'n Proto list
   const headerEntries = Array.from(request.headers.entries());
   const headers = init._initHeaders(headerEntries.length);
-  const encoder = new TextEncoder();
   for (let i = 0; i < headerEntries.length; i++) {
     const [name, value] = headerEntries[i];
     const header = headers.get(i);
     header.name = name;
-    const valueBytes = encoder.encode(value);
+    const valueBytes = textEncoder.encode(value);
     const valueData = header._initValue(valueBytes.length);
     valueData.copyBuffer(valueBytes);
   }
@@ -272,12 +275,11 @@ export function encodeHttpResponseInit(
   // Convert Headers to Cap'n Proto list
   const headerEntries = Array.from(response.headers.entries());
   const headers = init._initHeaders(headerEntries.length);
-  const encoder = new TextEncoder();
   for (let i = 0; i < headerEntries.length; i++) {
     const [name, value] = headerEntries[i];
     const header = headers.get(i);
     header.name = name;
-    const valueBytes = encoder.encode(value);
+    const valueBytes = textEncoder.encode(value);
     const valueData = header._initValue(valueBytes.length);
     valueData.copyBuffer(valueBytes);
   }
@@ -661,9 +663,8 @@ export function headersFromDecoded(
   decoded: Array<{ name: string; value: Uint8Array }>,
 ): Headers {
   const headers = new Headers();
-  const decoder = new TextDecoder();
   for (const { name, value } of decoded) {
-    headers.append(name, decoder.decode(value));
+    headers.append(name, textDecoder.decode(value));
   }
   return headers;
 }
