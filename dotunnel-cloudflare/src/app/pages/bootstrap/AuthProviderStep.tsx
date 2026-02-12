@@ -1,25 +1,14 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Input } from "@cloudflare/kumo/components/input";
+import { Label } from "@cloudflare/kumo/components/label";
+import { Loader } from "@cloudflare/kumo/components/loader";
+import { Select } from "@cloudflare/kumo/components/select";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
 import * as React from "react";
-import { Alert, AlertDescription } from "#app/components/ui/alert.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
-import { Input } from "#app/components/ui/input.tsx";
-import { Label } from "#app/components/ui/label.tsx";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "#app/components/ui/select.tsx";
 import {
   discoverOIDCEndpoints,
   saveAuthProvider,
@@ -144,13 +133,13 @@ export function AuthProviderStep({
     switch (providerType) {
       case "github":
         return (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-kumo-subtle">
             Create an OAuth App at{" "}
             <a
               href="https://github.com/settings/developers"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary underline"
+              className="text-kumo-brand underline"
             >
               GitHub Developer Settings
             </a>
@@ -158,13 +147,13 @@ export function AuthProviderStep({
         );
       case "google":
         return (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-kumo-subtle">
             Create OAuth credentials at{" "}
             <a
               href="https://console.cloud.google.com/apis/credentials"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary underline"
+              className="text-kumo-brand underline"
             >
               Google Cloud Console
             </a>
@@ -172,7 +161,7 @@ export function AuthProviderStep({
         );
       case "oidc":
         return (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-kumo-subtle">
             Enter your OIDC provider details (Auth0, Okta, Keycloak, etc.)
           </p>
         );
@@ -183,20 +172,16 @@ export function AuthProviderStep({
     <>
       <StepIndicator currentStep="auth" />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Configure Authentication Provider</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg border border-kumo-line">
+        <div className="p-6 space-y-2">
+          <Text variant="heading3">Configure Authentication Provider</Text>
+          <Text variant="secondary">
             Set up an OAuth/OIDC provider for admin authentication.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+          </Text>
+        </div>
+        <div className="px-6 pb-6">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
+            {error && <Banner variant="error">{error}</Banner>}
 
             <div className="space-y-2">
               <Label htmlFor="providerType">Provider Type</Label>
@@ -204,16 +189,11 @@ export function AuthProviderStep({
                 value={providerType}
                 onValueChange={(v) => setProviderType(v as ProviderType)}
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="github">GitHub (OAuth)</SelectItem>
-                  <SelectItem value="google">Google (OIDC)</SelectItem>
-                  <SelectItem value="oidc">
-                    Custom OIDC (Auth0, Okta, etc.)
-                  </SelectItem>
-                </SelectContent>
+                <Select.Option value="github">GitHub (OAuth)</Select.Option>
+                <Select.Option value="google">Google (OIDC)</Select.Option>
+                <Select.Option value="oidc">
+                  Custom OIDC (Auth0, Okta, etc.)
+                </Select.Option>
               </Select>
               {getHelpText()}
             </div>
@@ -245,17 +225,13 @@ export function AuthProviderStep({
                       onClick={handleFetchDiscovery}
                       disabled={isFetchingDiscovery || !issuer}
                     >
-                      {isFetchingDiscovery ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        "Fetch"
-                      )}
+                      {isFetchingDiscovery ? <Loader size="sm" /> : "Fetch"}
                     </Button>
                   </div>
                 </div>
 
-                <div className="space-y-4 rounded-md border p-4">
-                  <h4 className="text-sm font-medium text-muted-foreground">
+                <div className="space-y-4 rounded-md border border-kumo-line p-4">
+                  <h4 className="text-sm font-medium text-kumo-subtle">
                     Endpoints (auto-filled from discovery)
                   </h4>
 
@@ -333,7 +309,7 @@ export function AuthProviderStep({
               <Button type="submit" disabled={isLoading}>
                 {isLoading ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader size="sm" />
                     Saving...
                   </>
                 ) : (
@@ -342,8 +318,8 @@ export function AuthProviderStep({
               </Button>
             </div>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
     </>
   );
 }

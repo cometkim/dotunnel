@@ -1,17 +1,17 @@
 "use client";
 
+import { LinkButton } from "@cloudflare/kumo/components/button";
 import {
   ArrowLeft,
-  ChevronRight,
+  CaretRight,
   Database,
-  LayoutDashboard,
-  LogOut,
-  Network,
-  Settings,
+  Gear,
+  Globe,
+  SignOut,
+  SquaresFour,
   User,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import type * as React from "react";
-import { buttonVariants } from "#app/components/ui/button.tsx";
 import { cn } from "#app/lib/utils.ts";
 
 type NavItem = {
@@ -24,22 +24,22 @@ const navItems: NavItem[] = [
   {
     label: "Dashboard",
     href: "/admin",
-    icon: <LayoutDashboard className="h-4 w-4" />,
+    icon: <SquaresFour size={16} />,
   },
   {
     label: "Configuration",
     href: "/admin/config",
-    icon: <Settings className="h-4 w-4" />,
+    icon: <Gear size={16} />,
   },
   {
     label: "Users",
     href: "/admin/users",
-    icon: <User className="h-4 w-4" />,
+    icon: <User size={16} />,
   },
   {
     label: "Sessions",
     href: "/admin/sessions",
-    icon: <Database className="h-4 w-4" />,
+    icon: <Database size={16} />,
   },
 ];
 
@@ -66,14 +66,14 @@ export function AdminLayout({
   children,
 }: AdminLayoutProps): React.ReactElement {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-kumo-base">
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-50 w-64 border-r bg-card">
+      <aside className="fixed inset-y-0 left-0 z-50 w-64 border-r border-kumo-line bg-kumo-base">
         <div className="flex h-full flex-col">
           {/* Logo */}
-          <div className="flex h-14 items-center border-b px-4">
+          <div className="flex h-14 items-center border-b border-kumo-line px-4">
             <a href="/admin" className="flex items-center gap-2 font-semibold">
-              <Network className="h-5 w-5" />
+              <Globe size={20} />
               <span>DOtunnel Admin</span>
             </a>
           </div>
@@ -82,12 +82,12 @@ export function AdminLayout({
           <nav className="flex-1 space-y-1 p-4">
             <a
               href="/"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-kumo-subtle transition-colors hover:bg-kumo-elevated hover:text-kumo-default"
             >
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft size={16} />
               Back to DOtunnel
             </a>
-            <div className="my-2 border-t" />
+            <div className="my-2 border-t border-kumo-line" />
             {navItems.map((item) => (
               <a
                 key={item.href}
@@ -97,8 +97,8 @@ export function AdminLayout({
                   currentPath === item.href ||
                     (item.href !== "/admin" &&
                       currentPath.startsWith(item.href))
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ? "bg-kumo-brand text-white"
+                    : "text-kumo-subtle hover:bg-kumo-elevated hover:text-kumo-default",
                 )}
               >
                 {item.icon}
@@ -108,7 +108,7 @@ export function AdminLayout({
           </nav>
 
           {/* User section */}
-          <div className="border-t p-4">
+          <div className="border-t border-kumo-line p-4">
             <div className="flex items-center gap-3">
               {user.image ? (
                 <img
@@ -117,25 +117,25 @@ export function AdminLayout({
                   className="h-8 w-8 rounded-full"
                 />
               ) : (
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                  <User className="h-4 w-4" />
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-kumo-elevated">
+                  <User size={16} />
                 </div>
               )}
               <div className="flex-1 overflow-hidden">
                 <p className="truncate text-sm font-medium">{user.name}</p>
-                <p className="truncate text-xs text-muted-foreground">
+                <p className="truncate text-xs text-kumo-subtle">
                   {user.email}
                 </p>
               </div>
-              <a
+              <LinkButton
                 href="/_auth/logout"
                 title="Sign out"
-                className={cn(
-                  buttonVariants({ variant: "ghost", size: "icon" }),
-                )}
-              >
-                <LogOut className="h-4 w-4" />
-              </a>
+                variant="ghost"
+                shape="square"
+                size="sm"
+                icon={<SignOut size={16} />}
+                aria-label="Sign out"
+              />
             </div>
           </div>
         </div>
@@ -146,16 +146,16 @@ export function AdminLayout({
         <div className="container max-w-6xl py-8">
           {/* Breadcrumbs */}
           {breadcrumbs && breadcrumbs.length > 0 && (
-            <nav className="mb-4 flex items-center gap-1 text-sm text-muted-foreground">
+            <nav className="mb-4 flex items-center gap-1 text-sm text-kumo-subtle">
               {breadcrumbs.map((crumb, index) => (
                 <span key={crumb.label} className="flex items-center gap-1">
-                  {index > 0 && <ChevronRight className="h-4 w-4" />}
+                  {index > 0 && <CaretRight size={16} />}
                   {crumb.href ? (
-                    <a href={crumb.href} className="hover:text-foreground">
+                    <a href={crumb.href} className="hover:text-kumo-default">
                       {crumb.label}
                     </a>
                   ) : (
-                    <span className="text-foreground">{crumb.label}</span>
+                    <span className="text-kumo-default">{crumb.label}</span>
                   )}
                 </span>
               ))}

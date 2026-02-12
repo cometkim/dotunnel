@@ -1,3 +1,4 @@
+import { Text } from "@cloudflare/kumo/components/text";
 import type * as React from "react";
 import type { SessionUser } from "#app/auth/session.ts";
 import { getUserTunnels } from "#app/functions/tunnels.ts";
@@ -21,10 +22,10 @@ export async function ServiceDashboard({
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">My Tunnels</h1>
-            <p className="text-muted-foreground">
+            <Text variant="heading3">My Tunnels</Text>
+            <Text variant="secondary">
               Create and manage your tunnel endpoints
-            </p>
+            </Text>
           </div>
         </div>
 

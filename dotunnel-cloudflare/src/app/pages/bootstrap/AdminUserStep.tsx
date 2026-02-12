@@ -1,23 +1,13 @@
 "use client";
 
-import { AlertCircle, KeyRound } from "lucide-react";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { LinkButton } from "@cloudflare/kumo/components/button";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
+import { Key, WarningCircle } from "@phosphor-icons/react";
 import * as React from "react";
 
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "#app/components/ui/alert.tsx";
-import { buttonVariants } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
 import { getProviderDisplayName } from "#app/lib/auth-endpoints.ts";
-import { cn } from "#app/lib/utils.ts";
 import type { Config } from "#app/models/config.ts";
 import { StepIndicator } from "#app/pages/bootstrap/StepIndicator.tsx";
 
@@ -49,11 +39,9 @@ export function AdminUserStep({
 
   if (!provider) {
     return (
-      <Alert variant="destructive">
-        <AlertDescription>
-          No auth provider configured. Please go back and configure one.
-        </AlertDescription>
-      </Alert>
+      <Banner variant="error">
+        No auth provider configured. Please go back and configure one.
+      </Banner>
     );
   }
 
@@ -69,51 +57,52 @@ export function AdminUserStep({
     <>
       <StepIndicator currentStep="admin" />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Create Administrator Account</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg border border-kumo-line">
+        <div className="p-6 space-y-2">
+          <Text variant="heading3">Create Administrator Account</Text>
+          <Text variant="secondary">
             Sign in with {providerName} to create the initial administrator
             account.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+          </Text>
+        </div>
+        <div className="px-6 pb-6 space-y-6">
           {error && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Authentication Failed</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
+            <Banner variant="error">
+              <WarningCircle size={16} className="inline mr-1" />
+              <strong>Authentication Failed</strong> {error}
+            </Banner>
           )}
 
-          <Alert>
-            <AlertDescription>
-              The first user to sign in will become the administrator of this
-              DOtunnel instance.
-            </AlertDescription>
-          </Alert>
+          <Banner>
+            The first user to sign in will become the administrator of this
+            DOtunnel instance.
+          </Banner>
 
           <div className="flex flex-col items-center space-y-4 py-8">
-            <p className="text-center text-muted-foreground">
+            <p className="text-center text-kumo-subtle">
               Click the button below to sign in with your configured provider.
             </p>
 
-            <a href={authUrl} className={cn(buttonVariants({ size: "lg" }))}>
-              <KeyRound className="mr-2 h-5 w-5" />
+            <LinkButton
+              href={authUrl}
+              size="lg"
+              variant="primary"
+              icon={<Key size={20} />}
+            >
               Sign in with {providerName}
-            </a>
+            </LinkButton>
           </div>
 
-          <div className="border-t pt-4">
-            <p className="text-center text-sm text-muted-foreground">
+          <div className="border-t border-kumo-line pt-4">
+            <p className="text-center text-sm text-kumo-subtle">
               Configured provider: <strong>{providerName}</strong>
               {provider.type === "oidc" && (
                 <span className="block text-xs">({provider.issuer})</span>
               )}
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
     </>
   );
 }

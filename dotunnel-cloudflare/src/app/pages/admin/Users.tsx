@@ -1,17 +1,13 @@
 "use client";
 
-import { Loader2, Trash2, User } from "lucide-react";
+import { Badge } from "@cloudflare/kumo/components/badge";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Loader } from "@cloudflare/kumo/components/loader";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
+import { Trash, User } from "@phosphor-icons/react";
 import * as React from "react";
-import { Alert, AlertDescription } from "#app/components/ui/alert.tsx";
-import { Badge } from "#app/components/ui/badge.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
 import {
   type AdminUser,
   deleteUser,
@@ -66,79 +62,72 @@ export function UsersPageClient({
 
   return (
     <div className="space-y-6">
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error && <Banner variant="error">{error}</Banner>}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Users ({users.length})</CardTitle>
-          <CardDescription>Manage registered users</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {users.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No users found</p>
-          ) : (
-            <div className="space-y-4">
-              {users.map((user) => (
-                <div
-                  key={user.id}
-                  className="flex items-center justify-between rounded-md border p-4"
-                >
-                  <div className="flex items-center gap-4">
-                    {user.image ? (
-                      <img
-                        src={user.image}
-                        alt={user.name}
-                        className="h-10 w-10 rounded-full"
-                      />
-                    ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                        <User className="h-5 w-5" />
-                      </div>
-                    )}
-                    <div>
-                      <p className="font-medium">{user.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {user.email}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Joined {new Date(user.createdAt).toLocaleDateString()}
-                      </p>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">Users ({users.length})</Text>
+          <Text variant="secondary">Manage registered users</Text>
+        </div>
+        {users.length === 0 ? (
+          <p className="text-sm text-kumo-subtle">No users found</p>
+        ) : (
+          <div className="space-y-4">
+            {users.map((user) => (
+              <div
+                key={user.id}
+                className="flex items-center justify-between rounded-md border border-kumo-line p-4"
+              >
+                <div className="flex items-center gap-4">
+                  {user.image ? (
+                    <img
+                      src={user.image}
+                      alt={user.name}
+                      className="h-10 w-10 rounded-full"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-kumo-elevated">
+                      <User size={20} />
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {user.emailVerified && (
-                      <Badge variant="secondary">Verified</Badge>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDeleteSessions(user.id)}
-                    >
-                      Revoke Sessions
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleDeleteUser(user.id)}
-                      disabled={isDeleting === user.id}
-                    >
-                      {isDeleting === user.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
+                  )}
+                  <div>
+                    <p className="font-medium">{user.name}</p>
+                    <p className="text-sm text-kumo-subtle">{user.email}</p>
+                    <p className="text-xs text-kumo-subtle">
+                      Joined {new Date(user.createdAt).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                <div className="flex items-center gap-2">
+                  {user.emailVerified && (
+                    <Badge variant="secondary">Verified</Badge>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDeleteSessions(user.id)}
+                  >
+                    Revoke Sessions
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    shape="square"
+                    size="sm"
+                    aria-label="Delete user"
+                    onClick={() => handleDeleteUser(user.id)}
+                    disabled={isDeleting === user.id}
+                    icon={
+                      isDeleting === user.id ? undefined : <Trash size={16} />
+                    }
+                  >
+                    {isDeleting === user.id ? <Loader /> : null}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Surface>
     </div>
   );
 }

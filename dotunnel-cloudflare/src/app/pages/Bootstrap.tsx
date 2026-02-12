@@ -18,10 +18,12 @@ export async function BootstrapPage(): Promise<React.ReactElement> {
   const state = await getBootstrapState();
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-kumo-base">
       <div className="container mx-auto max-w-2xl px-4 py-8">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-foreground">DOtunnel Setup</h1>
+          <h1 className="text-2xl font-bold text-kumo-default">
+            DOtunnel Setup
+          </h1>
         </div>
 
         <BootstrapWizard state={state} />
@@ -60,7 +62,7 @@ function BootstrapWizard({
     case "done":
       // This shouldn't happen - middleware should redirect
       return (
-        <div className="text-center text-muted-foreground">
+        <div className="text-center text-kumo-subtle">
           Setup complete. Redirecting...
         </div>
       );

@@ -1,8 +1,8 @@
 "use client";
 
-import { Cable, LogOut, Network, Settings, User } from "lucide-react";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Gear, Globe, Plug, SignOut, User } from "@phosphor-icons/react";
 import type * as React from "react";
-import { buttonVariants } from "#app/components/ui/button.tsx";
 import { cn } from "#app/lib/utils.ts";
 
 type NavItem = {
@@ -15,7 +15,7 @@ const navItems: NavItem[] = [
   {
     label: "My Tunnels",
     href: "/",
-    icon: <Cable className="h-4 w-4" />,
+    icon: <Plug size={16} />,
   },
 ];
 
@@ -35,14 +35,14 @@ export function ServiceLayout({
   children,
 }: ServiceLayoutProps): React.ReactElement {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-kumo-base">
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-50 w-64 border-r bg-card">
+      <aside className="fixed inset-y-0 left-0 z-50 w-64 border-r border-kumo-line bg-kumo-elevated">
         <div className="flex h-full flex-col">
           {/* Logo */}
-          <div className="flex h-14 items-center border-b px-4">
+          <div className="flex h-14 items-center border-b border-kumo-line px-4">
             <a href="/" className="flex items-center gap-2 font-semibold">
-              <Network className="h-5 w-5" />
+              <Globe size={20} />
               <span>DOtunnel</span>
             </a>
           </div>
@@ -56,26 +56,26 @@ export function ServiceLayout({
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   currentPath === item.href
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ? "bg-kumo-brand text-white"
+                    : "text-kumo-subtle hover:bg-kumo-elevated hover:text-kumo-default",
                 )}
               >
                 {item.icon}
                 {item.label}
               </a>
             ))}
-            <div className="my-2 border-t" />
+            <div className="my-2 border-t border-kumo-line" />
             <a
               href="/admin"
-              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-kumo-subtle transition-colors hover:bg-kumo-elevated hover:text-kumo-default"
             >
-              <Settings className="h-4 w-4" />
+              <Gear size={16} />
               Admin
             </a>
           </nav>
 
           {/* User section */}
-          <div className="border-t p-4">
+          <div className="border-t border-kumo-line p-4">
             <div className="flex items-center gap-3">
               {user.image ? (
                 <img
@@ -84,24 +84,24 @@ export function ServiceLayout({
                   className="h-8 w-8 rounded-full"
                 />
               ) : (
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                  <User className="h-4 w-4" />
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-kumo-elevated">
+                  <User size={16} />
                 </div>
               )}
               <div className="flex-1 overflow-hidden">
                 <p className="truncate text-sm font-medium">{user.name}</p>
-                <p className="truncate text-xs text-muted-foreground">
+                <p className="truncate text-xs text-kumo-subtle">
                   {user.email}
                 </p>
               </div>
-              <a
-                href="/_auth/logout"
-                title="Sign out"
-                className={cn(
-                  buttonVariants({ variant: "ghost", size: "icon" }),
-                )}
-              >
-                <LogOut className="h-4 w-4" />
+              <a href="/_auth/logout" title="Sign out">
+                <Button
+                  variant="ghost"
+                  shape="square"
+                  size="sm"
+                  aria-label="Sign out"
+                  icon={<SignOut size={16} />}
+                />
               </a>
             </div>
           </div>

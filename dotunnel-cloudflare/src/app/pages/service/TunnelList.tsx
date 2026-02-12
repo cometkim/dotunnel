@@ -1,27 +1,22 @@
 "use client";
 
+import { Badge } from "@cloudflare/kumo/components/badge";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Input } from "@cloudflare/kumo/components/input";
+import { Label } from "@cloudflare/kumo/components/label";
+import { Loader } from "@cloudflare/kumo/components/loader";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
 import {
+  ArrowSquareOut,
   Check,
   Circle,
   Copy,
-  ExternalLink,
-  Loader2,
   Plus,
-  Trash2,
-} from "lucide-react";
+  Trash,
+} from "@phosphor-icons/react";
 import * as React from "react";
-import { Alert, AlertDescription } from "#app/components/ui/alert.tsx";
-import { Badge } from "#app/components/ui/badge.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
-import { Input } from "#app/components/ui/input.tsx";
-import { Label } from "#app/components/ui/label.tsx";
 import {
   createTunnel,
   deleteTunnel,
@@ -145,27 +140,25 @@ export function TunnelList({
 
   return (
     <div className="space-y-6">
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error && <Banner variant="error">{error}</Banner>}
 
       {/* Create tunnel section */}
       {!showCreateForm ? (
-        <Button onClick={() => setShowCreateForm(true)} className="gap-2">
-          <Plus className="h-4 w-4" />
+        <Button
+          onClick={() => setShowCreateForm(true)}
+          icon={<Plus size={16} />}
+        >
           New Tunnel
         </Button>
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>Create Named Tunnel</CardTitle>
-            <CardDescription>
+        <Surface className="rounded-lg border border-kumo-line">
+          <div className="p-6 space-y-2">
+            <Text variant="heading3">Create Named Tunnel</Text>
+            <Text variant="secondary">
               Reserve a persistent subdomain for your tunnel endpoint.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+            </Text>
+          </div>
+          <div className="px-6 pb-6 space-y-4">
             {/* Subdomain input */}
             <div className="space-y-2">
               <Label htmlFor="subdomain">Subdomain</Label>
@@ -179,13 +172,11 @@ export function TunnelList({
                   placeholder="myapp"
                   className="max-w-xs"
                 />
-                <span className="text-muted-foreground">.tunnel.io</span>
-                {checkingSubdomain && (
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                )}
+                <span className="text-kumo-subtle">.tunnel.io</span>
+                {checkingSubdomain && <Loader size="sm" />}
               </div>
               {subdomainError && (
-                <p className="text-sm text-destructive">{subdomainError}</p>
+                <p className="text-sm text-kumo-danger">{subdomainError}</p>
               )}
             </div>
 
@@ -209,7 +200,7 @@ export function TunnelList({
               >
                 {isCreating ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader size="sm" />
                     Creating...
                   </>
                 ) : (
@@ -228,36 +219,36 @@ export function TunnelList({
                 Cancel
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Surface>
       )}
 
       {/* Named tunnels */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Named Tunnels ({namedTunnels.length})</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg border border-kumo-line">
+        <div className="p-6 space-y-2">
+          <Text variant="heading3">Named Tunnels ({namedTunnels.length})</Text>
+          <Text variant="secondary">
             {namedTunnels.length === 0
               ? "You haven't created any named tunnels yet"
               : "Persistent tunnel endpoints with custom subdomains"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+          </Text>
+        </div>
+        <div className="px-6 pb-6">
           {namedTunnels.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="rounded-full bg-muted p-4">
-                <ExternalLink className="h-8 w-8 text-muted-foreground" />
+              <div className="rounded-full bg-kumo-elevated p-4">
+                <ArrowSquareOut size={32} className="text-kumo-subtle" />
               </div>
               <h3 className="mt-4 text-lg font-semibold">No named tunnels</h3>
-              <p className="mt-2 text-sm text-muted-foreground">
+              <p className="mt-2 text-sm text-kumo-subtle">
                 Create a named tunnel to reserve a persistent subdomain.
               </p>
               {!showCreateForm && (
                 <Button
                   onClick={() => setShowCreateForm(true)}
                   className="mt-4"
+                  icon={<Plus size={16} />}
                 >
-                  <Plus className="mr-2 h-4 w-4" />
                   Create Tunnel
                 </Button>
               )}
@@ -267,16 +258,18 @@ export function TunnelList({
               {namedTunnels.map((tunnel) => (
                 <div
                   key={tunnel.publicId}
-                  className="flex items-center justify-between rounded-md border p-4"
+                  className="flex items-center justify-between rounded-md border border-kumo-line p-4"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <Circle
-                        className={`h-2 w-2 ${
+                        size={8}
+                        weight="fill"
+                        className={
                           tunnel.status === "online"
-                            ? "fill-green-500 text-green-500"
-                            : "fill-muted-foreground text-muted-foreground"
-                        }`}
+                            ? "fill-kumo-success text-kumo-success"
+                            : "fill-kumo-subtle text-kumo-subtle"
+                        }
                       />
                       <a
                         href={tunnel.url}
@@ -288,11 +281,11 @@ export function TunnelList({
                       </a>
                     </div>
                     {tunnel.name && (
-                      <p className="mt-1 text-sm text-muted-foreground">
+                      <p className="mt-1 text-sm text-kumo-subtle">
                         {tunnel.name}
                       </p>
                     )}
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="mt-1 text-xs text-kumo-subtle">
                       Created {new Date(tunnel.createdAt).toLocaleDateString()}
                       {tunnel.lastConnectedAt &&
                         ` - Last connected ${new Date(tunnel.lastConnectedAt).toLocaleDateString()}`}
@@ -301,62 +294,70 @@ export function TunnelList({
                   <div className="flex items-center gap-2">
                     <Button
                       variant="ghost"
-                      size="icon"
+                      shape="square"
+                      size="sm"
+                      aria-label="Copy URL"
                       onClick={() => handleCopyUrl(tunnel)}
-                      title="Copy URL"
-                    >
-                      {copiedId === tunnel.publicId ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </Button>
+                      icon={
+                        copiedId === tunnel.publicId ? (
+                          <Check size={16} className="text-kumo-success" />
+                        ) : (
+                          <Copy size={16} />
+                        )
+                      }
+                    />
                     <Button
                       variant="ghost"
-                      size="icon"
+                      shape="square"
+                      size="sm"
+                      aria-label="Delete tunnel"
                       onClick={() => handleDelete(tunnel.publicId)}
                       disabled={deletingId === tunnel.publicId}
-                      title="Delete tunnel"
-                    >
-                      {deletingId === tunnel.publicId ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      )}
-                    </Button>
+                      icon={
+                        deletingId === tunnel.publicId ? (
+                          <Loader size="sm" />
+                        ) : (
+                          <Trash size={16} className="text-kumo-danger" />
+                        )
+                      }
+                    />
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
 
       {/* Ephemeral tunnels (read-only) */}
       {ephemeralTunnels.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Sessions ({ephemeralTunnels.length})</CardTitle>
-            <CardDescription>
+        <Surface className="rounded-lg border border-kumo-line">
+          <div className="p-6 space-y-2">
+            <Text variant="heading3">
+              Active Sessions ({ephemeralTunnels.length})
+            </Text>
+            <Text variant="secondary">
               Temporary tunnels created via CLI. These are automatically cleaned
               up.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+            </Text>
+          </div>
+          <div className="px-6 pb-6">
             <div className="space-y-3">
               {ephemeralTunnels.map((tunnel) => (
                 <div
                   key={tunnel.publicId}
-                  className="flex items-center justify-between rounded-md border p-4"
+                  className="flex items-center justify-between rounded-md border border-kumo-line p-4"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <Circle
-                        className={`h-2 w-2 ${
+                        size={8}
+                        weight="fill"
+                        className={
                           tunnel.status === "online"
-                            ? "fill-green-500 text-green-500"
-                            : "fill-muted-foreground text-muted-foreground"
-                        }`}
+                            ? "fill-kumo-success text-kumo-success"
+                            : "fill-kumo-subtle text-kumo-subtle"
+                        }
                       />
                       <a
                         href={tunnel.url}
@@ -369,11 +370,11 @@ export function TunnelList({
                       <Badge variant="secondary">ephemeral</Badge>
                     </div>
                     {tunnel.name && (
-                      <p className="mt-1 text-sm text-muted-foreground">
+                      <p className="mt-1 text-sm text-kumo-subtle">
                         {tunnel.name}
                       </p>
                     )}
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="mt-1 text-xs text-kumo-subtle">
                       Created {new Date(tunnel.createdAt).toLocaleDateString()}
                       {tunnel.lastConnectedAt &&
                         ` - Last connected ${new Date(tunnel.lastConnectedAt).toLocaleDateString()}`}
@@ -382,22 +383,24 @@ export function TunnelList({
                   <div className="flex items-center gap-2">
                     <Button
                       variant="ghost"
-                      size="icon"
+                      shape="square"
+                      size="sm"
+                      aria-label="Copy URL"
                       onClick={() => handleCopyUrl(tunnel)}
-                      title="Copy URL"
-                    >
-                      {copiedId === tunnel.publicId ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </Button>
+                      icon={
+                        copiedId === tunnel.publicId ? (
+                          <Check size={16} className="text-kumo-success" />
+                        ) : (
+                          <Copy size={16} />
+                        )
+                      }
+                    />
                   </div>
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </Surface>
       )}
     </div>
   );

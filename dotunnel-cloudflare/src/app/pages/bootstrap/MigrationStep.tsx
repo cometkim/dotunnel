@@ -1,22 +1,17 @@
 "use client";
 
-import { AlertTriangle, Check, RefreshCw, X } from "lucide-react";
+import { Badge } from "@cloudflare/kumo/components/badge";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
+import {
+  ArrowsClockwise,
+  Check,
+  WarningCircle,
+  X,
+} from "@phosphor-icons/react";
 import * as React from "react";
-
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "#app/components/ui/alert.tsx";
-import { Badge } from "#app/components/ui/badge.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
 
 import { refreshMigrationStatus } from "#app/functions/bootstrap.ts";
 import type { MigrationStatus } from "#app/lib/db.ts";
@@ -46,33 +41,33 @@ export function MigrationStep({
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <AlertTriangle className="h-5 w-5 text-yellow-500" />
-          Database Migration Required
-        </CardTitle>
-        <CardDescription>
+    <Surface className="rounded-lg border border-kumo-line">
+      <div className="p-6 space-y-2">
+        <div className="flex items-center gap-2">
+          <WarningCircle size={20} className="text-kumo-warning" />
+          <Text variant="heading3">Database Migration Required</Text>
+        </div>
+        <Text variant="secondary">
           The database schema has not been initialized.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <Alert>
-          <AlertTitle>Run migrations</AlertTitle>
-          <AlertDescription className="mt-2">
+        </Text>
+      </div>
+      <div className="px-6 pb-6 space-y-6">
+        <Banner>
+          <strong>Run migrations</strong>
+          <div className="mt-2">
             <p className="mb-3">
               Execute the following command to apply database migrations:
             </p>
-            <div className="rounded-md bg-muted p-4 font-mono text-sm">
-              <p className="text-muted-foreground"># Local development:</p>
+            <div className="rounded-md bg-kumo-elevated p-4 font-mono text-sm">
+              <p className="text-kumo-subtle"># Local development:</p>
               <p className="mb-2">
                 yarn wrangler d1 migrations apply dotunnel --local
               </p>
-              <p className="text-muted-foreground"># Production:</p>
+              <p className="text-kumo-subtle"># Production:</p>
               <p>yarn wrangler d1 migrations apply dotunnel --remote</p>
             </div>
-          </AlertDescription>
-        </Alert>
+          </div>
+        </Banner>
 
         <div>
           <h4 className="mb-3 text-sm font-medium">Migration Status</h4>
@@ -82,17 +77,17 @@ export function MigrationStep({
               return (
                 <div
                   key={migration}
-                  className="flex items-center justify-between rounded-md border p-3"
+                  className="flex items-center justify-between rounded-md border border-kumo-line p-3"
                 >
                   <span className="font-mono text-sm">{migration}</span>
-                  <Badge variant={isApplied ? "default" : "destructive"}>
+                  <Badge variant={isApplied ? "primary" : "destructive"}>
                     {isApplied ? (
                       <span className="flex items-center gap-1">
-                        <Check className="h-3 w-3" /> Applied
+                        <Check size={12} /> Applied
                       </span>
                     ) : (
                       <span className="flex items-center gap-1">
-                        <X className="h-3 w-3" /> Not applied
+                        <X size={12} /> Not applied
                       </span>
                     )}
                   </Badge>
@@ -103,14 +98,20 @@ export function MigrationStep({
         </div>
 
         <div className="flex justify-end">
-          <Button onClick={handleRefresh} disabled={isRefreshing}>
-            <RefreshCw
-              className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
-            />
+          <Button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            icon={
+              <ArrowsClockwise
+                size={16}
+                className={isRefreshing ? "animate-spin" : ""}
+              />
+            }
+          >
             Refresh Status
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </Surface>
   );
 }

@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check } from "@phosphor-icons/react/ssr";
 import type * as React from "react";
 
 import { cn } from "#app/lib/utils.ts";
@@ -38,25 +38,20 @@ export function StepIndicator({
                 <div
                   className={cn(
                     "flex h-8 w-8 items-center justify-center rounded-full border-2 text-sm font-medium",
-                    isCompleted &&
-                      "border-primary bg-primary text-primary-foreground",
-                    isCurrent && "border-primary text-primary",
+                    isCompleted && "border-kumo-brand bg-kumo-brand text-white",
+                    isCurrent && "border-kumo-brand text-kumo-brand",
                     !isCompleted &&
                       !isCurrent &&
-                      "border-muted-foreground/30 text-muted-foreground/50",
+                      "border-kumo-subtle/30 text-kumo-subtle/50",
                   )}
                 >
-                  {isCompleted ? (
-                    <Check className="h-4 w-4" />
-                  ) : (
-                    <span>{index + 1}</span>
-                  )}
+                  {isCompleted ? <Check size={16} /> : <span>{index + 1}</span>}
                 </div>
                 <span
                   className={cn(
                     "mt-1 text-xs",
-                    isCurrent && "font-medium text-foreground",
-                    !isCurrent && "text-muted-foreground",
+                    isCurrent && "font-medium text-kumo-default",
+                    !isCurrent && "text-kumo-subtle",
                   )}
                 >
                   {step.label}
@@ -69,8 +64,8 @@ export function StepIndicator({
                   className={cn(
                     "mx-2 h-0.5 w-12 sm:w-16 md:w-24",
                     index < currentIndex
-                      ? "bg-primary"
-                      : "bg-muted-foreground/30",
+                      ? "bg-kumo-brand"
+                      : "bg-kumo-subtle/30",
                   )}
                 />
               )}

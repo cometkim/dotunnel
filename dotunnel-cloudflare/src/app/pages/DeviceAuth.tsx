@@ -1,18 +1,13 @@
 "use client";
 
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Input } from "@cloudflare/kumo/components/input";
+import { Label } from "@cloudflare/kumo/components/label";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
 import { useEffect, useState } from "react";
 import type { SessionUser } from "#app/auth/session.ts";
-import { Alert, AlertDescription } from "#app/components/ui/alert.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
-import { Input } from "#app/components/ui/input.tsx";
-import { Label } from "#app/components/ui/label.tsx";
 import {
   authorizeDeviceCode,
   type DeviceCodeInfo,
@@ -27,7 +22,7 @@ type DeviceAuthPageProps = {
 
 export function DeviceAuthPage({ user, initialCode }: DeviceAuthPageProps) {
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-kumo-base flex items-center justify-center p-4">
       <DeviceAuthForm user={user} initialCode={initialCode} />
     </div>
   );
@@ -137,11 +132,11 @@ function DeviceAuthForm({ user, initialCode }: DeviceAuthPageProps) {
   // Success state
   if (status === "success") {
     return (
-      <Card className="w-full max-w-md border-zinc-800 bg-zinc-900">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
+      <Surface className="w-full max-w-md rounded-lg border border-kumo-line">
+        <div className="p-6 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-kumo-success/10">
             <svg
-              className="h-6 w-6 text-green-500"
+              className="h-6 w-6 text-kumo-success"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -156,23 +151,23 @@ function DeviceAuthForm({ user, initialCode }: DeviceAuthPageProps) {
               />
             </svg>
           </div>
-          <CardTitle className="text-white">Device Authorized</CardTitle>
-          <CardDescription className="text-zinc-400">
+          <Text variant="heading3">Device Authorized</Text>
+          <p className="mt-2 text-kumo-subtle">
             You can now close this page and return to your CLI.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+          </p>
+        </div>
+      </Surface>
     );
   }
 
   // Denied state
   if (status === "denied") {
     return (
-      <Card className="w-full max-w-md border-zinc-800 bg-zinc-900">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10">
+      <Surface className="w-full max-w-md rounded-lg border border-kumo-line">
+        <div className="p-6 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-kumo-danger/10">
             <svg
-              className="h-6 w-6 text-red-500"
+              className="h-6 w-6 text-kumo-danger"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -187,52 +182,46 @@ function DeviceAuthForm({ user, initialCode }: DeviceAuthPageProps) {
               />
             </svg>
           </div>
-          <CardTitle className="text-white">Access Denied</CardTitle>
-          <CardDescription className="text-zinc-400">
+          <Text variant="heading3">Access Denied</Text>
+          <p className="mt-2 text-kumo-subtle">
             You have denied this authorization request.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+          </p>
+        </div>
+      </Surface>
     );
   }
 
   // Confirm authorization (after code verification)
   if (deviceCode) {
     return (
-      <Card className="w-full max-w-md border-zinc-800 bg-zinc-900">
-        <CardHeader className="text-center">
-          <CardTitle className="text-white">Authorize Device</CardTitle>
-          <CardDescription className="text-zinc-400">
+      <Surface className="w-full max-w-md rounded-lg border border-kumo-line">
+        <div className="p-6 text-center space-y-2">
+          <Text variant="heading3">Authorize Device</Text>
+          <Text variant="secondary">
             A device is requesting access to your DOtunnel account.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+          </Text>
+        </div>
+        <div className="px-6 pb-6 space-y-6">
+          <div className="rounded-lg border border-kumo-line bg-kumo-base p-4">
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-zinc-500">Client</span>
-                <span className="text-white font-mono">
-                  {deviceCode.clientId}
-                </span>
+                <span className="text-kumo-subtle">Client</span>
+                <span className="font-mono">{deviceCode.clientId}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-500">Account</span>
-                <span className="text-white">{user.email}</span>
+                <span className="text-kumo-subtle">Account</span>
+                <span>{user.email}</span>
               </div>
               {deviceCode.scope && (
                 <div className="flex justify-between">
-                  <span className="text-zinc-500">Scope</span>
-                  <span className="text-white">{deviceCode.scope}</span>
+                  <span className="text-kumo-subtle">Scope</span>
+                  <span>{deviceCode.scope}</span>
                 </div>
               )}
             </div>
           </div>
 
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+          {error && <Banner variant="error">{error}</Banner>}
 
           <div className="flex gap-3">
             <Button
@@ -255,29 +244,27 @@ function DeviceAuthForm({ user, initialCode }: DeviceAuthPageProps) {
           <button
             type="button"
             onClick={handleReset}
-            className="w-full text-center text-sm text-zinc-500 hover:text-zinc-300"
+            className="w-full text-center text-sm text-kumo-subtle hover:text-kumo-default"
           >
             Enter a different code
           </button>
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
     );
   }
 
   // Code entry form
   return (
-    <Card className="w-full max-w-md border-zinc-800 bg-zinc-900">
-      <CardHeader className="text-center">
-        <CardTitle className="text-white">Enter Device Code</CardTitle>
-        <CardDescription className="text-zinc-400">
+    <Surface className="w-full max-w-md rounded-lg border border-kumo-line">
+      <div className="p-6 text-center space-y-2">
+        <Text variant="heading3">Enter Device Code</Text>
+        <Text variant="secondary">
           Enter the code shown in your CLI to authorize the device.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </Text>
+      </div>
+      <div className="px-6 pb-6 space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="code" className="text-zinc-300">
-            Device Code
-          </Label>
+          <Label htmlFor="code">Device Code</Label>
           <Input
             id="code"
             value={code}
@@ -290,11 +277,7 @@ function DeviceAuthForm({ user, initialCode }: DeviceAuthPageProps) {
           />
         </div>
 
-        {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+        {error && <Banner variant="error">{error}</Banner>}
 
         <Button
           className="w-full"
@@ -304,10 +287,10 @@ function DeviceAuthForm({ user, initialCode }: DeviceAuthPageProps) {
           {status === "loading" ? "Verifying..." : "Continue"}
         </Button>
 
-        <p className="text-center text-xs text-zinc-500">
+        <p className="text-center text-xs text-kumo-subtle">
           Signed in as {user.email}
         </p>
-      </CardContent>
-    </Card>
+      </div>
+    </Surface>
   );
 }

@@ -1,17 +1,13 @@
 "use client";
 
-import { Loader2, Monitor, Terminal, Trash2 } from "lucide-react";
+import { Badge } from "@cloudflare/kumo/components/badge";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Loader } from "@cloudflare/kumo/components/loader";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
+import { Monitor, Terminal, Trash } from "@phosphor-icons/react";
 import * as React from "react";
-import { Alert, AlertDescription } from "#app/components/ui/alert.tsx";
-import { Badge } from "#app/components/ui/badge.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
 import { type AdminSession, deleteSession } from "#app/functions/admin.ts";
 
 type SessionsPageClientProps = {
@@ -88,194 +84,189 @@ export function SessionsPageClient({
 
   return (
     <div className="space-y-6">
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error && <Banner variant="error">{error}</Banner>}
 
       {/* Browser Sessions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Browser Sessions ({browserSessions.length})</CardTitle>
-          <CardDescription>Active web browser sessions</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {browserSessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No browser sessions</p>
-          ) : (
-            <div className="space-y-4">
-              {browserSessions.map((session) => (
-                <div
-                  key={session.publicId}
-                  className="flex items-center justify-between rounded-md border p-4"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                      <Monitor className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">{session.userName}</p>
-                        {session.publicId === currentSessionId && (
-                          <Badge variant="default" className="text-xs">
-                            Current
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {session.userEmail}
-                      </p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>{parseUserAgent(session.userAgent)}</span>
-                        <span>-</span>
-                        <span>{session.ipAddress || "Unknown IP"}</span>
-                      </div>
-                    </div>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">
+            Browser Sessions ({browserSessions.length})
+          </Text>
+          <Text variant="secondary">Active web browser sessions</Text>
+        </div>
+        {browserSessions.length === 0 ? (
+          <p className="text-sm text-kumo-subtle">No browser sessions</p>
+        ) : (
+          <div className="space-y-4">
+            {browserSessions.map((session) => (
+              <div
+                key={session.publicId}
+                className="flex items-center justify-between rounded-md border border-kumo-line p-4"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-kumo-elevated">
+                    <Monitor size={20} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    {session.expiresAt && isExpired(session.expiresAt) ? (
-                      <Badge variant="destructive">Expired</Badge>
-                    ) : session.expiresAt ? (
-                      <Badge variant="secondary">
-                        Expires{" "}
-                        {new Date(session.expiresAt).toLocaleDateString()}
-                      </Badge>
-                    ) : null}
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() =>
-                        handleDeleteSession(session.publicId, session.type)
-                      }
-                      disabled={isDeleting === session.publicId}
-                    >
-                      {isDeleting === session.publicId ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">{session.userName}</p>
+                      {session.publicId === currentSessionId && (
+                        <Badge variant="primary" className="text-xs">
+                          Current
+                        </Badge>
                       )}
-                    </Button>
+                    </div>
+                    <p className="text-sm text-kumo-subtle">
+                      {session.userEmail}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs text-kumo-subtle">
+                      <span>{parseUserAgent(session.userAgent)}</span>
+                      <span>-</span>
+                      <span>{session.ipAddress || "Unknown IP"}</span>
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                <div className="flex items-center gap-2">
+                  {session.expiresAt && isExpired(session.expiresAt) ? (
+                    <Badge variant="destructive">Expired</Badge>
+                  ) : session.expiresAt ? (
+                    <Badge variant="secondary">
+                      Expires {new Date(session.expiresAt).toLocaleDateString()}
+                    </Badge>
+                  ) : null}
+                  <Button
+                    variant="destructive"
+                    shape="square"
+                    size="sm"
+                    aria-label="Delete session"
+                    onClick={() =>
+                      handleDeleteSession(session.publicId, session.type)
+                    }
+                    disabled={isDeleting === session.publicId}
+                    icon={
+                      isDeleting === session.publicId ? undefined : (
+                        <Trash size={16} />
+                      )
+                    }
+                  >
+                    {isDeleting === session.publicId ? <Loader /> : null}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Surface>
 
       {/* CLI Tokens */}
-      <Card>
-        <CardHeader>
-          <CardTitle>CLI Tokens ({activeCli.length})</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">CLI Tokens ({activeCli.length})</Text>
+          <Text variant="secondary">
             Active CLI authentication tokens from device flow
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {activeCli.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No active CLI tokens
-            </p>
-          ) : (
-            <div className="space-y-4">
-              {activeCli.map((session) => (
-                <div
-                  key={session.publicId}
-                  className="flex items-center justify-between rounded-md border p-4"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                      <Terminal className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">{session.userName}</p>
-                        <Badge variant="outline" className="text-xs">
-                          CLI
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {session.userEmail}
-                      </p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>{session.name || "Unnamed token"}</span>
-                        {session.lastUsedAt && (
-                          <>
-                            <span>-</span>
-                            <span>
-                              Last used{" "}
-                              {new Date(session.lastUsedAt).toLocaleString()}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
+          </Text>
+        </div>
+        {activeCli.length === 0 ? (
+          <p className="text-sm text-kumo-subtle">No active CLI tokens</p>
+        ) : (
+          <div className="space-y-4">
+            {activeCli.map((session) => (
+              <div
+                key={session.publicId}
+                className="flex items-center justify-between rounded-md border border-kumo-line p-4"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-kumo-elevated">
+                    <Terminal size={20} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">
-                      Created {new Date(session.createdAt).toLocaleDateString()}
-                    </Badge>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() =>
-                        handleDeleteSession(session.publicId, session.type)
-                      }
-                      disabled={isDeleting === session.publicId}
-                    >
-                      {isDeleting === session.publicId ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">{session.userName}</p>
+                      <Badge variant="outline" className="text-xs">
+                        CLI
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-kumo-subtle">
+                      {session.userEmail}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs text-kumo-subtle">
+                      <span>{session.name || "Unnamed token"}</span>
+                      {session.lastUsedAt && (
+                        <>
+                          <span>-</span>
+                          <span>
+                            Last used{" "}
+                            {new Date(session.lastUsedAt).toLocaleString()}
+                          </span>
+                        </>
                       )}
-                    </Button>
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">
+                    Created {new Date(session.createdAt).toLocaleDateString()}
+                  </Badge>
+                  <Button
+                    variant="destructive"
+                    shape="square"
+                    size="sm"
+                    aria-label="Revoke token"
+                    onClick={() =>
+                      handleDeleteSession(session.publicId, session.type)
+                    }
+                    disabled={isDeleting === session.publicId}
+                    icon={
+                      isDeleting === session.publicId ? undefined : (
+                        <Trash size={16} />
+                      )
+                    }
+                  >
+                    {isDeleting === session.publicId ? <Loader /> : null}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Surface>
 
       {/* Revoked CLI Tokens */}
       {revokedCli.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Revoked Tokens ({revokedCli.length})</CardTitle>
-            <CardDescription>Previously revoked CLI tokens</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {revokedCli.map((session) => (
-                <div
-                  key={session.publicId}
-                  className="flex items-center justify-between rounded-md border border-dashed p-4 opacity-60"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                      <Terminal className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="font-medium">{session.userName}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {session.userEmail}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {session.name || "Unnamed token"}
-                      </p>
-                    </div>
+        <Surface className="rounded-lg p-6">
+          <div className="mb-4">
+            <Text variant="heading3">Revoked Tokens ({revokedCli.length})</Text>
+            <Text variant="secondary">Previously revoked CLI tokens</Text>
+          </div>
+          <div className="space-y-4">
+            {revokedCli.map((session) => (
+              <div
+                key={session.publicId}
+                className="flex items-center justify-between rounded-md border border-dashed border-kumo-line p-4 opacity-60"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-kumo-elevated">
+                    <Terminal size={20} />
                   </div>
-                  <Badge variant="destructive">
-                    Revoked{" "}
-                    {session.revokedAt &&
-                      new Date(session.revokedAt).toLocaleDateString()}
-                  </Badge>
+                  <div>
+                    <p className="font-medium">{session.userName}</p>
+                    <p className="text-sm text-kumo-subtle">
+                      {session.userEmail}
+                    </p>
+                    <p className="text-xs text-kumo-subtle">
+                      {session.name || "Unnamed token"}
+                    </p>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                <Badge variant="destructive">
+                  Revoked{" "}
+                  {session.revokedAt &&
+                    new Date(session.revokedAt).toLocaleDateString()}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </Surface>
       )}
     </div>
   );

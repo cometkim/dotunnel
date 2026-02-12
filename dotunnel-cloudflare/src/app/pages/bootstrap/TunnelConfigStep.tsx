@@ -1,22 +1,14 @@
 "use client";
 
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Input } from "@cloudflare/kumo/components/input";
+import { Label } from "@cloudflare/kumo/components/label";
+import { Loader } from "@cloudflare/kumo/components/loader";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
+import { ArrowLeft } from "@phosphor-icons/react";
 import * as React from "react";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "#app/components/ui/alert.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
-import { Input } from "#app/components/ui/input.tsx";
-import { Label } from "#app/components/ui/label.tsx";
 import { saveHostsConfig } from "#app/functions/bootstrap.ts";
 import type { Config } from "#app/models/config.ts";
 import { StepIndicator } from "#app/pages/bootstrap/StepIndicator.tsx";
@@ -75,21 +67,17 @@ export function TunnelConfigStep({
     <>
       <StepIndicator currentStep="tunnel" />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Configure Hosts</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg border border-kumo-line">
+        <div className="p-6 space-y-2">
+          <Text variant="heading3">Configure Hosts</Text>
+          <Text variant="secondary">
             Set up the service host and tunnel host pattern. These can be on
             completely different domains.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+          </Text>
+        </div>
+        <div className="px-6 pb-6">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
+            {error && <Banner variant="error">{error}</Banner>}
 
             <div className="space-y-4">
               <div className="space-y-2">
@@ -101,9 +89,9 @@ export function TunnelConfigStep({
                   onChange={(e) => setServiceHost(e.target.value)}
                   required
                 />
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-kumo-subtle">
                   The host for the dashboard & API (e.g.,{" "}
-                  <code className="rounded bg-muted px-1">
+                  <code className="rounded bg-kumo-elevated px-1">
                     dotunnel.example.com
                   </code>
                   )
@@ -119,44 +107,51 @@ export function TunnelConfigStep({
                   onChange={(e) => setTunnelHostPattern(e.target.value)}
                   required
                 />
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-kumo-subtle">
                   Wildcard pattern for tunnel endpoints. Must start with{" "}
-                  <code className="rounded bg-muted px-1">*.</code> (e.g.,{" "}
-                  <code className="rounded bg-muted px-1">*.tunnel.io</code>)
+                  <code className="rounded bg-kumo-elevated px-1">*.</code>{" "}
+                  (e.g.,{" "}
+                  <code className="rounded bg-kumo-elevated px-1">
+                    *.tunnel.io
+                  </code>
+                  )
                 </p>
               </div>
             </div>
 
             {isValid && (
-              <div className="rounded-md border p-4 space-y-3">
+              <div className="rounded-md border border-kumo-line p-4 space-y-3">
                 <h4 className="text-sm font-medium">Request Routing</h4>
                 <div className="space-y-2 text-sm">
                   <div className="flex items-start gap-2">
-                    <span className="font-mono text-muted-foreground">
+                    <span className="font-mono text-kumo-subtle">
                       {serviceHost}
                     </span>
-                    <span className="text-muted-foreground">→</span>
+                    <span className="text-kumo-subtle">&rarr;</span>
                     <span>Service dashboard & API</span>
                   </div>
                   <div className="flex items-start gap-2">
-                    <span className="font-mono text-muted-foreground">
+                    <span className="font-mono text-kumo-subtle">
                       {tunnelHostPattern}
                     </span>
-                    <span className="text-muted-foreground">→</span>
+                    <span className="text-kumo-subtle">&rarr;</span>
                     <span>Tunnel endpoints</span>
                   </div>
                 </div>
               </div>
             )}
 
-            <Alert>
-              <AlertTitle>Wrangler Routes Configuration</AlertTitle>
-              <AlertDescription className="mt-2">
+            <Banner>
+              <strong>Wrangler Routes Configuration</strong>
+              <div className="mt-2">
                 <p className="mb-3">
                   Add these routes to your{" "}
-                  <code className="rounded bg-muted px-1">wrangler.jsonc</code>:
+                  <code className="rounded bg-kumo-elevated px-1">
+                    wrangler.jsonc
+                  </code>
+                  :
                 </p>
-                <div className="rounded-md bg-muted p-3 font-mono text-xs overflow-auto">
+                <div className="rounded-md bg-kumo-elevated p-3 font-mono text-xs overflow-auto">
                   <pre>{`"routes": [
   {
     "pattern": "${serviceHost || "dotunnel.example.com"}/*",
@@ -168,26 +163,26 @@ export function TunnelConfigStep({
   }
 ]`}</pre>
                 </div>
-                <p className="mt-3 text-sm text-muted-foreground">
+                <p className="mt-3 text-sm text-kumo-subtle">
                   Make sure DNS records are configured for both domains in
                   Cloudflare.
                 </p>
-              </AlertDescription>
-            </Alert>
+              </div>
+            </Banner>
 
             <div className="flex justify-between">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => window.history.back()}
+                icon={<ArrowLeft size={16} />}
               >
-                <ArrowLeft className="mr-2 h-4 w-4" />
                 Back
               </Button>
               <Button type="submit" disabled={isLoading || !isValid}>
                 {isLoading ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader size="sm" />
                     Saving...
                   </>
                 ) : (
@@ -196,8 +191,8 @@ export function TunnelConfigStep({
               </Button>
             </div>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
     </>
   );
 }

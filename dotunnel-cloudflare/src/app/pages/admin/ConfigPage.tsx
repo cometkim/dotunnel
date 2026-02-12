@@ -1,36 +1,25 @@
 "use client";
 
+import { Badge } from "@cloudflare/kumo/components/badge";
+import { Banner } from "@cloudflare/kumo/components/banner";
+import { Button } from "@cloudflare/kumo/components/button";
+import { Input } from "@cloudflare/kumo/components/input";
+import { Label } from "@cloudflare/kumo/components/label";
+import { Loader } from "@cloudflare/kumo/components/loader";
+import { Select } from "@cloudflare/kumo/components/select";
+import { Surface } from "@cloudflare/kumo/components/surface";
+import { Text } from "@cloudflare/kumo/components/text";
 import {
+  CaretDown,
+  CaretUp,
   Check,
-  ChevronDown,
-  ChevronUp,
   Copy,
-  KeyRound,
-  Loader2,
+  FloppyDisk,
+  Key,
   Plus,
-  Save,
-  Trash2,
-} from "lucide-react";
+  Trash,
+} from "@phosphor-icons/react";
 import * as React from "react";
-import { Alert, AlertDescription } from "#app/components/ui/alert.tsx";
-import { Badge } from "#app/components/ui/badge.tsx";
-import { Button } from "#app/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#app/components/ui/card.tsx";
-import { Input } from "#app/components/ui/input.tsx";
-import { Label } from "#app/components/ui/label.tsx";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "#app/components/ui/select.tsx";
 import { discoverOIDCEndpoints, saveFullConfig } from "#app/functions/admin.ts";
 import { getProviderDisplayName } from "#app/lib/auth-endpoints.ts";
 import type { AuthProvider, Config } from "#app/models/config.ts";
@@ -298,13 +287,13 @@ export function ConfigPageClient({
     switch (providerType) {
       case "github":
         return (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-kumo-subtle">
             Create an OAuth App at{" "}
             <a
               href="https://github.com/settings/developers"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary underline"
+              className="text-kumo-brand underline"
             >
               GitHub Developer Settings
             </a>
@@ -312,13 +301,13 @@ export function ConfigPageClient({
         );
       case "google":
         return (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-kumo-subtle">
             Create OAuth credentials at{" "}
             <a
               href="https://console.cloud.google.com/apis/credentials"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary underline"
+              className="text-kumo-brand underline"
             >
               Google Cloud Console
             </a>
@@ -326,7 +315,7 @@ export function ConfigPageClient({
         );
       case "oidc":
         return (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-kumo-subtle">
             Enter your OIDC provider details (Auth0, Okta, Keycloak, etc.)
           </p>
         );
@@ -340,126 +329,106 @@ export function ConfigPageClient({
 
   return (
     <div className="space-y-6">
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      {error && <Banner variant="error">{error}</Banner>}
 
-      {success && (
-        <Alert>
-          <AlertDescription>{success}</AlertDescription>
-        </Alert>
-      )}
+      {success && <Banner>{success}</Banner>}
 
       {/* Unsaved changes warning */}
-      {hasChanges && (
-        <Alert>
-          <AlertDescription>You have unsaved changes.</AlertDescription>
-        </Alert>
-      )}
+      {hasChanges && <Banner variant="alert">You have unsaved changes.</Banner>}
 
       {/* Config Source */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Configuration Source</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">Configuration Source</Text>
+          <Text variant="secondary">
             Where the current configuration is loaded from
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-4">
-            <Badge
-              variant={source === "static" ? "default" : "secondary"}
-              className="text-sm"
-            >
-              {source === "static" ? "Static Secret (CONFIG)" : "D1 Database"}
-            </Badge>
-            <p className="text-sm text-muted-foreground">
-              {source === "database"
-                ? "Changes will be persisted to the database."
-                : "Configuration is loaded from CONFIG secret. Changes here require redeployment."}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+          </Text>
+        </div>
+        <div className="flex items-center gap-4">
+          <Badge
+            variant={source === "static" ? "primary" : "secondary"}
+            className="text-sm"
+          >
+            {source === "static" ? "Static Secret (CONFIG)" : "D1 Database"}
+          </Badge>
+          <p className="text-sm text-kumo-subtle">
+            {source === "database"
+              ? "Changes will be persisted to the database."
+              : "Configuration is loaded from CONFIG secret. Changes here require redeployment."}
+          </p>
+        </div>
+      </Surface>
 
       {/* Hosts Configuration */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Hosts Configuration</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">Hosts Configuration</Text>
+          <Text variant="secondary">
             Configure the service host and tunnel host pattern
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+          </Text>
+        </div>
+        <div className="space-y-6">
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="serviceHost">Service Host</Label>
+              <Label>Service Host</Label>
               <Input
-                id="serviceHost"
+                aria-label="Service Host"
                 value={serviceHost}
                 onChange={(e) => setServiceHost(e.target.value)}
                 placeholder="dotunnel.example.com"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-kumo-subtle">
                 Hostname for the admin dashboard and API
               </p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="tunnelHostPattern">Tunnel Host Pattern</Label>
+              <Label>Tunnel Host Pattern</Label>
               <Input
-                id="tunnelHostPattern"
+                aria-label="Tunnel Host Pattern"
                 value={tunnelHostPattern}
                 onChange={(e) => setTunnelHostPattern(e.target.value)}
                 placeholder="*.tunnel.io"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-kumo-subtle">
                 Wildcard pattern for tunnel endpoints (must start with *.)
               </p>
             </div>
           </div>
 
           {isValid && serviceHost && tunnelHostPattern && (
-            <div className="rounded-md border p-4 space-y-2">
+            <div className="rounded-md border border-kumo-line p-4 space-y-2">
               <h4 className="text-sm font-medium">Request Routing</h4>
               <div className="grid gap-2 text-sm sm:grid-cols-2">
                 <div className="flex items-center gap-2">
-                  <code className="rounded bg-muted px-2 py-1 text-xs">
+                  <code className="rounded bg-kumo-elevated px-2 py-1 text-xs">
                     {serviceHost}
                   </code>
-                  <span className="text-muted-foreground">
-                    → Dashboard & API
-                  </span>
+                  <span className="text-kumo-subtle">→ Dashboard & API</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <code className="rounded bg-muted px-2 py-1 text-xs">
+                  <code className="rounded bg-kumo-elevated px-2 py-1 text-xs">
                     {tunnelHostPattern}
                   </code>
-                  <span className="text-muted-foreground">
-                    → Tunnel endpoints
-                  </span>
+                  <span className="text-kumo-subtle">→ Tunnel endpoints</span>
                 </div>
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
 
       {/* Auth Providers */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Auth Providers ({providers.length})</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">Auth Providers ({providers.length})</Text>
+          <Text variant="secondary">
             Configured authentication providers for user sign-in
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+          </Text>
+        </div>
+        <div className="space-y-4">
           {providers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No providers configured
-            </p>
+            <p className="text-sm text-kumo-subtle">No providers configured</p>
           ) : (
             <div className="space-y-4">
               {providers.map((provider) => {
@@ -467,18 +436,18 @@ export function ConfigPageClient({
                 return (
                   <div
                     key={provider.id}
-                    className="rounded-md border p-4 space-y-3"
+                    className="rounded-md border border-kumo-line p-4 space-y-3"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                          <KeyRound className="h-5 w-5" />
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-kumo-elevated">
+                          <Key size={20} />
                         </div>
                         <div>
                           <p className="font-medium">
                             {getProviderDisplayName(provider)}
                           </p>
-                          <p className="text-sm text-muted-foreground">
+                          <p className="text-sm text-kumo-subtle">
                             {details.issuer}
                           </p>
                         </div>
@@ -489,17 +458,18 @@ export function ConfigPageClient({
                         </Badge>
                         <Button
                           variant="destructive"
+                          shape="square"
                           size="sm"
+                          aria-label="Delete provider"
+                          icon={<Trash size={16} />}
                           onClick={() => handleDeleteProvider(provider.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        />
                       </div>
                     </div>
                     <div className="grid gap-2 text-sm">
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Client ID</span>
-                        <code className="rounded bg-muted px-2 py-0.5 text-xs">
+                        <span className="text-kumo-subtle">Client ID</span>
+                        <code className="rounded bg-kumo-elevated px-2 py-0.5 text-xs">
                           {details.clientId.slice(0, 20)}...
                         </code>
                       </div>
@@ -511,44 +481,35 @@ export function ConfigPageClient({
           )}
 
           {/* Add Provider Form */}
-          <div className="rounded-md border border-dashed">
+          <div className="rounded-md border border-dashed border-kumo-line">
             <button
               type="button"
-              className="w-full p-4 flex items-center justify-between text-left hover:bg-muted/50 transition-colors"
+              className="w-full p-4 flex items-center justify-between text-left hover:bg-kumo-elevated/50 transition-colors"
               onClick={() => setShowAddForm(!showAddForm)}
             >
               <div className="flex items-center gap-2">
-                <Plus className="h-4 w-4" />
+                <Plus size={16} />
                 <span className="font-medium">Add Provider</span>
               </div>
-              {showAddForm ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
+              {showAddForm ? <CaretUp size={16} /> : <CaretDown size={16} />}
             </button>
 
             {showAddForm && (
               <form
                 onSubmit={handleAddProvider}
-                className="p-4 pt-0 space-y-4 border-t"
+                className="p-4 pt-0 space-y-4 border-t border-kumo-line"
               >
                 <div className="space-y-2">
-                  <Label htmlFor="providerType">Provider Type</Label>
+                  <Label>Provider Type</Label>
                   <Select
                     value={providerType}
                     onValueChange={(v) => setProviderType(v as ProviderType)}
                   >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="github">GitHub (OAuth)</SelectItem>
-                      <SelectItem value="google">Google (OIDC)</SelectItem>
-                      <SelectItem value="oidc">
-                        Custom OIDC (Auth0, Okta, etc.)
-                      </SelectItem>
-                    </SelectContent>
+                    <Select.Option value="github">GitHub (OAuth)</Select.Option>
+                    <Select.Option value="google">Google (OIDC)</Select.Option>
+                    <Select.Option value="oidc">
+                      Custom OIDC (Auth0, Okta, etc.)
+                    </Select.Option>
                   </Select>
                   {getProviderHelpText()}
                 </div>
@@ -556,9 +517,9 @@ export function ConfigPageClient({
                 {providerType === "oidc" && (
                   <>
                     <div className="space-y-2">
-                      <Label htmlFor="providerName">Display Name</Label>
+                      <Label>Display Name</Label>
                       <Input
-                        id="providerName"
+                        aria-label="Display Name"
                         placeholder="Auth0"
                         value={providerName}
                         onChange={(e) => setProviderName(e.target.value)}
@@ -566,10 +527,10 @@ export function ConfigPageClient({
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="issuer">Issuer URL</Label>
+                      <Label>Issuer URL</Label>
                       <div className="flex gap-2">
                         <Input
-                          id="issuer"
+                          aria-label="Issuer URL"
                           placeholder="https://mytenant.auth0.com"
                           value={issuer}
                           onChange={(e) => setIssuer(e.target.value)}
@@ -580,26 +541,20 @@ export function ConfigPageClient({
                           onClick={handleFetchDiscovery}
                           disabled={isFetchingDiscovery || !issuer}
                         >
-                          {isFetchingDiscovery ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            "Fetch"
-                          )}
+                          {isFetchingDiscovery ? <Loader /> : "Fetch"}
                         </Button>
                       </div>
                     </div>
 
-                    <div className="space-y-4 rounded-md border p-4">
-                      <h4 className="text-sm font-medium text-muted-foreground">
+                    <div className="space-y-4 rounded-md border border-kumo-line p-4">
+                      <h4 className="text-sm font-medium text-kumo-subtle">
                         Endpoints (auto-filled from discovery)
                       </h4>
 
                       <div className="space-y-2">
-                        <Label htmlFor="authorizationEndpoint">
-                          Authorization Endpoint
-                        </Label>
+                        <Label>Authorization Endpoint</Label>
                         <Input
-                          id="authorizationEndpoint"
+                          aria-label="Authorization Endpoint"
                           placeholder="https://..."
                           value={authorizationEndpoint}
                           onChange={(e) =>
@@ -609,9 +564,9 @@ export function ConfigPageClient({
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="tokenEndpoint">Token Endpoint</Label>
+                        <Label>Token Endpoint</Label>
                         <Input
-                          id="tokenEndpoint"
+                          aria-label="Token Endpoint"
                           placeholder="https://..."
                           value={tokenEndpoint}
                           onChange={(e) => setTokenEndpoint(e.target.value)}
@@ -619,11 +574,9 @@ export function ConfigPageClient({
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="userinfoEndpoint">
-                          UserInfo Endpoint (optional)
-                        </Label>
+                        <Label>UserInfo Endpoint (optional)</Label>
                         <Input
-                          id="userinfoEndpoint"
+                          aria-label="UserInfo Endpoint"
                           placeholder="https://..."
                           value={userinfoEndpoint}
                           onChange={(e) => setUserinfoEndpoint(e.target.value)}
@@ -631,9 +584,9 @@ export function ConfigPageClient({
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="jwksUri">JWKS URI</Label>
+                        <Label>JWKS URI</Label>
                         <Input
-                          id="jwksUri"
+                          aria-label="JWKS URI"
                           placeholder="https://..."
                           value={jwksUri}
                           onChange={(e) => setJwksUri(e.target.value)}
@@ -644,9 +597,9 @@ export function ConfigPageClient({
                 )}
 
                 <div className="space-y-2">
-                  <Label htmlFor="clientId">Client ID</Label>
+                  <Label>Client ID</Label>
                   <Input
-                    id="clientId"
+                    aria-label="Client ID"
                     placeholder="Enter client ID"
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
@@ -655,9 +608,9 @@ export function ConfigPageClient({
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="clientSecret">Client Secret</Label>
+                  <Label>Client Secret</Label>
                   <Input
-                    id="clientSecret"
+                    aria-label="Client Secret"
                     type="password"
                     placeholder="Enter client secret"
                     value={clientSecret}
@@ -677,28 +630,30 @@ export function ConfigPageClient({
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={!clientId || !clientSecret}>
-                    <Plus className="mr-2 h-4 w-4" />
+                  <Button
+                    type="submit"
+                    disabled={!clientId || !clientSecret}
+                    icon={<Plus size={16} />}
+                  >
                     Add Provider
                   </Button>
                 </div>
               </form>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
 
       {/* Wrangler Routes */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Wrangler Routes Configuration</CardTitle>
-          <CardDescription>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">Wrangler Routes Configuration</Text>
+          <Text variant="secondary">
             Add these routes to your wrangler.jsonc file
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-md bg-muted p-4 font-mono text-sm overflow-auto">
-            <pre>{`"routes": [
+          </Text>
+        </div>
+        <div className="rounded-md bg-kumo-elevated p-4 font-mono text-sm overflow-auto">
+          <pre>{`"routes": [
   {
     "pattern": "${serviceHost || "dotunnel.example.com"}/*",
     "zone_name": "${serviceZone}"
@@ -708,95 +663,90 @@ export function ConfigPageClient({
     "zone_name": "${tunnelZone}"
   }
 ]`}</pre>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
 
       {/* Export / Save Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
+      <Surface className="rounded-lg p-6">
+        <div className="mb-4">
+          <Text variant="heading3">
             {source === "database"
               ? "Save Configuration"
               : "Export Configuration"}
-          </CardTitle>
-          <CardDescription>
+          </Text>
+          <Text variant="secondary">
             {source === "database"
               ? "Save changes to the database, then export for production deployment"
               : "Copy the base64-encoded configuration for deployment"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+          </Text>
+        </div>
+        <div className="space-y-4">
           {/* Base64 Preview */}
           <div className="space-y-2">
             <Label>Base64-encoded Configuration</Label>
             <div className="relative">
-              <div className="rounded-md bg-muted p-3 pr-12 font-mono text-xs break-all max-h-32 overflow-auto">
+              <div className="rounded-md bg-kumo-elevated p-3 pr-12 font-mono text-xs break-all max-h-32 overflow-auto">
                 {liveBase64}
               </div>
               <Button
                 type="button"
                 variant="ghost"
-                size="icon"
+                shape="square"
+                size="sm"
                 className="absolute right-1 top-1"
                 onClick={handleCopyConfig}
-                title="Copy to clipboard"
-              >
-                {isCopied ? (
-                  <Check className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </Button>
+                aria-label="Copy to clipboard"
+                icon={
+                  isCopied ? (
+                    <Check size={16} className="text-kumo-success" />
+                  ) : (
+                    <Copy size={16} />
+                  )
+                }
+              />
             </div>
           </div>
 
           {/* Deployment instructions */}
-          <div className="rounded-md bg-muted p-3 font-mono text-sm">
-            <p className="text-muted-foreground"># Set config secret</p>
+          <div className="rounded-md bg-kumo-elevated p-3 font-mono text-sm">
+            <p className="text-kumo-subtle"># Set config secret</p>
             <p>wrangler secret put CONFIG</p>
-            <p className="text-muted-foreground mt-2"># Deploy</p>
+            <p className="text-kumo-subtle mt-2"># Deploy</p>
             <p>wrangler deploy</p>
           </div>
 
           {/* Action Button */}
-          <div className="flex justify-end pt-4 border-t">
+          <div className="flex justify-end pt-4 border-t border-kumo-line">
             {source === "database" ? (
               <Button
                 onClick={handleSave}
                 disabled={isSaving || !hasChanges || !isValid}
                 size="lg"
+                variant="primary"
+                icon={isSaving ? undefined : <FloppyDisk size={16} />}
               >
                 {isSaving ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader />
                     Saving...
                   </>
                 ) : (
-                  <>
-                    <Save className="mr-2 h-4 w-4" />
-                    Save Configuration
-                  </>
+                  "Save Configuration"
                 )}
               </Button>
             ) : (
-              <Button onClick={handleCopyConfig} size="lg">
-                {isCopied ? (
-                  <>
-                    <Check className="mr-2 h-4 w-4" />
-                    Copied!
-                  </>
-                ) : (
-                  <>
-                    <Copy className="mr-2 h-4 w-4" />
-                    Copy Configuration
-                  </>
-                )}
+              <Button
+                onClick={handleCopyConfig}
+                size="lg"
+                variant="primary"
+                icon={isCopied ? <Check size={16} /> : <Copy size={16} />}
+              >
+                {isCopied ? "Copied!" : "Copy Configuration"}
               </Button>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Surface>
     </div>
   );
 }
