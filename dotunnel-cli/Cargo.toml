@@ -31,7 +31,3 @@ toml = "0.8"
 tungstenite = { version = "0.26", features = ["native-tls"] }
 ureq = { version = "3", default-features = false, features = ["native-tls", "gzip", "json"] }
 url = "2"
-capnp = "0.20"
-
-[build-dependencies]
-capnpc = "0.20"

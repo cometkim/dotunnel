@@ -7,9 +7,6 @@ use clap_verbosity_flag::Verbosity;
 mod command;
 mod config;
 mod http_client;
-mod message_capnp {
-    include!(concat!(env!("OUT_DIR"), "/message_capnp.rs"));
-}
 mod sys;
 
 #[derive(Debug, clap::Parser)]

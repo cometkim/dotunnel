@@ -3,6 +3,7 @@
   "name": "project",
   "packageManager": "yarn@4.12.0",
   "workspaces": [
+    "dotunnel",
     "dotunnel-cloudflare"
   ],
   "resolutions": {

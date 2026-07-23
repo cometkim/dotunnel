@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "name": "dotunnel",
+  "version": "0.0.0",
+  "description": "DOtunnel core library, wire protocol codecs are generated from the Rust schema",
+  "type": "module",
+  "exports": {
+    "./transport": "./src/transport.gen.ts"
+  },
+  "dependencies": {
+    "rkyv-js": "^0.1.1"
+  }
+}

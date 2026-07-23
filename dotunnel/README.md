@@ -1,6 +1,6 @@
 # DOtunnel core library
 
-DOtunnel uses [Cap'n Proto] for serialization. Because the schema is considered unstable yet, and it has better [JavaScript support](https://github.com/unjs/capnp-es). Later it might be migrated to [rkyv] with RIIR.
+DOtunnel uses [rkyv] for serialization. The wire schema is defined once as Rust types in `src/transport/message.rs`, and `build.rs` generates the matching TypeScript codecs with [rkyv-js] into `js/`. This directory doubles as the `dotunnel` npm package (a yarn workspace) exporting those codecs, consumed by `dotunnel-cloudflare` via `workspace:^`.
 
-[Cap'n Proto]: https://capnproto.org/
 [rkyv]: https://rkyv.org/
+[rkyv-js]: https://github.com/cometkim/rkyv-js

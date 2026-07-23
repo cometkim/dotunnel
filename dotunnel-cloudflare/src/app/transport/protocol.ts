@@ -1,22 +1,22 @@
 /**
- * Protocol utilities for encoding/decoding Cap'n Proto tunnel messages.
+ * Protocol utilities for encoding/decoding rkyv tunnel messages.
  * Provides high-level helpers for HTTP request/response and WebSocket frame handling.
+ *
+ * The wire schema is defined in dotunnel/src/transport/message.rs;
+ * the codecs in message.gen.ts are generated from it by rkyv-js-codegen.
  */
 
-import { Message } from "capnp-es";
 import {
-  AbortReason,
+  ArchivedEnvelope,
   type Control,
-  Control_Which,
-  Envelope,
-  Envelope_Which,
   type Header,
   type HttpMessage,
-  HttpMessage_Which,
-  HttpVersion,
-  type WebSocketFrame,
-  WebSocketOpcode,
-} from "./message.ts";
+  type Payload,
+  type AbortReason as WireAbortReason,
+  type HttpVersion as WireHttpVersion,
+  type WebSocketFrame as WireWebSocketFrame,
+  type WebSocketOpcode as WireWebSocketOpcode,
+} from "dotunnel/transport";
 
 // =============================================================================
 // Constants
@@ -31,6 +31,39 @@ export const REQUEST_TIMEOUT_MS = 30_000;
 /** Module-level TextEncoder/TextDecoder singletons to avoid per-call allocation */
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+// =============================================================================
+// Enums (tag unions mirroring the Rust enums)
+// =============================================================================
+
+export type HttpVersion = WireHttpVersion["tag"];
+export const HttpVersion = {
+  H1: "H1",
+  H2: "H2",
+} as const satisfies Record<string, HttpVersion>;
+
+export type AbortReason = WireAbortReason["tag"];
+export const AbortReason = {
+  UNKNOWN: "Unknown",
+  TIMEOUT: "Timeout",
+  PEER_CLOSED: "PeerClosed",
+  RESET_BY_PEER: "ResetByPeer",
+  CONNECTION_LOST: "ConnectionLost",
+  CANCELLED: "Cancelled",
+  PROTOCOL_ERROR: "ProtocolError",
+  FLOW_CONTROL: "FlowControl",
+  OVERLOAD: "Overload",
+} as const satisfies Record<string, AbortReason>;
+
+export type WebSocketOpcode = WireWebSocketOpcode["tag"];
+export const WebSocketOpcode = {
+  CONTINUATION: "Continuation",
+  TEXT: "Text",
+  BINARY: "Binary",
+  CLOSE: "Close",
+  PING: "Ping",
+  PONG: "Pong",
+} as const satisfies Record<string, WebSocketOpcode>;
 
 // =============================================================================
 // Types
@@ -115,6 +148,33 @@ export type DecodedControl =
 // Encoding Functions
 // =============================================================================
 
+function encodeEnvelope(
+  connectionId: bigint,
+  streamId: number,
+  msgSeq: number,
+  payload: (timestampMs: bigint) => Payload,
+): Uint8Array {
+  const timestampMs = BigInt(Date.now());
+  return ArchivedEnvelope.encode({
+    timestamp_ms: timestampMs,
+    connection_id: connectionId,
+    stream_id: streamId,
+    msg_seq: msgSeq,
+    payload: payload(timestampMs),
+  });
+}
+
+function encodeHeaders(headers: Headers): Header[] {
+  return Array.from(headers.entries()).map(([name, value]) => ({
+    name,
+    value: textEncoder.encode(value),
+  }));
+}
+
+function wireAbortReason(reason: AbortReason): WireAbortReason {
+  return { tag: reason, value: null } as WireAbortReason;
+}
+
 /**
  * Encode an HTTP request init message.
  * Sent from DO to CLI when a new HTTP request arrives.
@@ -129,35 +189,21 @@ export function encodeHttpRequestInit(
     headers: Headers;
     hasBody: boolean;
   },
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const http = envelope._initHttp();
-  const init = http._initRequestInit();
-  init.timestampMs = envelope.timestampMs;
-  init.method = request.method;
-  init.uri = request.uri;
-  init.version = HttpVersion.H1;
-  init.hasBody = request.hasBody;
-
-  // Convert Headers to Cap'n Proto list
-  const headerEntries = Array.from(request.headers.entries());
-  const headers = init._initHeaders(headerEntries.length);
-  for (let i = 0; i < headerEntries.length; i++) {
-    const [name, value] = headerEntries[i];
-    const header = headers.get(i);
-    header.name = name;
-    const valueBytes = textEncoder.encode(value);
-    const valueData = header._initValue(valueBytes.length);
-    valueData.copyBuffer(valueBytes);
-  }
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Http",
+    value: {
+      tag: "RequestInit",
+      value: {
+        timestamp_ms: timestampMs,
+        method: request.method,
+        uri: request.uri,
+        version: { tag: "H1", value: null },
+        headers: encodeHeaders(request.headers),
+        has_body: request.hasBody,
+      },
+    },
+  }));
 }
 
 /**
@@ -172,26 +218,19 @@ export function encodeHttpBodyChunk(
   seq: number,
   isLast: boolean,
   isRequest: boolean,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const http = envelope._initHttp();
-  const chunk = isRequest
-    ? http._initRequestBodyChunk()
-    : http._initResponseBodyChunk();
-  chunk.timestampMs = envelope.timestampMs;
-  chunk.seq = seq;
-  chunk.isLast = isLast;
-
-  const chunkData = chunk._initData(data.length);
-  chunkData.copyBuffer(data);
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Http",
+    value: {
+      tag: isRequest ? "RequestBodyChunk" : "ResponseBodyChunk",
+      value: {
+        timestamp_ms: timestampMs,
+        data,
+        seq,
+        is_last: isLast,
+      },
+    },
+  }));
 }
 
 /**
@@ -202,19 +241,14 @@ export function encodeHttpRequestEnd(
   connectionId: bigint,
   streamId: number,
   msgSeq: number,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const http = envelope._initHttp();
-  const end = http._initRequestEnd();
-  end.timestampMs = envelope.timestampMs;
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Http",
+    value: {
+      tag: "RequestEnd",
+      value: { timestamp_ms: timestampMs },
+    },
+  }));
 }
 
 /**
@@ -226,21 +260,18 @@ export function encodeHttpRequestAbort(
   msgSeq: number,
   reason: AbortReason,
   detail: string,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const http = envelope._initHttp();
-  const abort = http._initRequestAbort();
-  abort.timestampMs = envelope.timestampMs;
-  abort.reason = reason;
-  abort.detail = detail;
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Http",
+    value: {
+      tag: "RequestAbort",
+      value: {
+        timestamp_ms: timestampMs,
+        reason: wireAbortReason(reason),
+        detail,
+      },
+    },
+  }));
 }
 
 /**
@@ -257,34 +288,20 @@ export function encodeHttpResponseInit(
     hasBody: boolean;
     contentLength?: bigint;
   },
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const http = envelope._initHttp();
-  const init = http._initResponseInit();
-  init.timestampMs = envelope.timestampMs;
-  init.status = response.status;
-  init.hasBody = response.hasBody;
-  init.contentLength = response.contentLength ?? 0n;
-
-  // Convert Headers to Cap'n Proto list
-  const headerEntries = Array.from(response.headers.entries());
-  const headers = init._initHeaders(headerEntries.length);
-  for (let i = 0; i < headerEntries.length; i++) {
-    const [name, value] = headerEntries[i];
-    const header = headers.get(i);
-    header.name = name;
-    const valueBytes = textEncoder.encode(value);
-    const valueData = header._initValue(valueBytes.length);
-    valueData.copyBuffer(valueBytes);
-  }
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Http",
+    value: {
+      tag: "ResponseInit",
+      value: {
+        timestamp_ms: timestampMs,
+        status: response.status,
+        headers: encodeHeaders(response.headers),
+        has_body: response.hasBody,
+        content_length: response.contentLength ?? 0n,
+      },
+    },
+  }));
 }
 
 /**
@@ -294,19 +311,14 @@ export function encodeHttpResponseEnd(
   connectionId: bigint,
   streamId: number,
   msgSeq: number,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const http = envelope._initHttp();
-  const end = http._initResponseEnd();
-  end.timestampMs = envelope.timestampMs;
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Http",
+    value: {
+      tag: "ResponseEnd",
+      value: { timestamp_ms: timestampMs },
+    },
+  }));
 }
 
 /**
@@ -318,21 +330,18 @@ export function encodeHttpResponseAbort(
   msgSeq: number,
   reason: AbortReason,
   detail: string,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const http = envelope._initHttp();
-  const abort = http._initResponseAbort();
-  abort.timestampMs = envelope.timestampMs;
-  abort.reason = reason;
-  abort.detail = detail;
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Http",
+    value: {
+      tag: "ResponseAbort",
+      value: {
+        timestamp_ms: timestampMs,
+        reason: wireAbortReason(reason),
+        detail,
+      },
+    },
+  }));
 }
 
 /**
@@ -349,29 +358,22 @@ export function encodeWebSocketFrame(
     fin?: boolean;
     closeCode?: number;
   },
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = streamId;
-  envelope.msgSeq = msgSeq;
-
-  const ws = envelope._initWs();
-  ws.timestampMs = envelope.timestampMs;
-  ws.opcode = frame.opcode;
-  ws.fin = frame.fin ?? true;
-  ws.masked = false;
-  ws.maskKey = 0;
-
-  if (frame.closeCode !== undefined) {
-    ws.closeCode = frame.closeCode;
-  }
-
-  const payload = ws._initPayload(frame.payload.length);
-  payload.copyBuffer(frame.payload);
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, streamId, msgSeq, (timestampMs) => ({
+    tag: "Ws",
+    value: {
+      timestamp_ms: timestampMs,
+      fin: frame.fin ?? true,
+      rsv1: false,
+      rsv2: false,
+      rsv3: false,
+      opcode: { tag: frame.opcode, value: null } as WireWebSocketOpcode,
+      masked: false,
+      mask_key: 0,
+      payload: frame.payload,
+      close_code: frame.closeCode ?? null,
+    },
+  }));
 }
 
 /**
@@ -380,24 +382,17 @@ export function encodeWebSocketFrame(
 export function encodeControlPing(
   connectionId: bigint,
   data?: Uint8Array,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = 0;
-  envelope.msgSeq = 0;
-
-  const control = envelope._initControl();
-  const ping = control._initPing();
-  ping.timestampMs = envelope.timestampMs;
-
-  if (data) {
-    const pingData = ping._initData(data.length);
-    pingData.copyBuffer(data);
-  }
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, 0, 0, (timestampMs) => ({
+    tag: "Control",
+    value: {
+      tag: "Ping",
+      value: {
+        timestamp_ms: timestampMs,
+        data: data ?? new Uint8Array(0),
+      },
+    },
+  }));
 }
 
 /**
@@ -406,24 +401,17 @@ export function encodeControlPing(
 export function encodeControlPong(
   connectionId: bigint,
   data?: Uint8Array,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = 0;
-  envelope.msgSeq = 0;
-
-  const control = envelope._initControl();
-  const pong = control._initPong();
-  pong.timestampMs = envelope.timestampMs;
-
-  if (data) {
-    const pongData = pong._initData(data.length);
-    pongData.copyBuffer(data);
-  }
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, 0, 0, (timestampMs) => ({
+    tag: "Control",
+    value: {
+      tag: "Pong",
+      value: {
+        timestamp_ms: timestampMs,
+        data: data ?? new Uint8Array(0),
+      },
+    },
+  }));
 }
 
 /**
@@ -433,21 +421,18 @@ export function encodeControlError(
   connectionId: bigint,
   code: number,
   message: string,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = 0;
-  envelope.msgSeq = 0;
-
-  const control = envelope._initControl();
-  const error = control._initError();
-  error.timestampMs = envelope.timestampMs;
-  error.code = code;
-  error.message = message;
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, 0, 0, (timestampMs) => ({
+    tag: "Control",
+    value: {
+      tag: "Error",
+      value: {
+        timestamp_ms: timestampMs,
+        code,
+        message,
+      },
+    },
+  }));
 }
 
 /**
@@ -457,21 +442,18 @@ export function encodeControlGoAway(
   connectionId: bigint,
   lastMsgSeq: number,
   reason: string,
-): ArrayBuffer {
-  const msg = new Message();
-  const envelope = msg.initRoot(Envelope);
-  envelope.timestampMs = BigInt(Date.now());
-  envelope.connectionId = connectionId;
-  envelope.streamId = 0;
-  envelope.msgSeq = 0;
-
-  const control = envelope._initControl();
-  const goAway = control._initGoAway();
-  goAway.timestampMs = envelope.timestampMs;
-  goAway.lastMsgSeq = lastMsgSeq;
-  goAway.reason = reason;
-
-  return msg.toPackedArrayBuffer();
+): Uint8Array {
+  return encodeEnvelope(connectionId, 0, 0, (timestampMs) => ({
+    tag: "Control",
+    value: {
+      tag: "GoAway",
+      value: {
+        timestamp_ms: timestampMs,
+        last_msg_seq: lastMsgSeq,
+        reason,
+      },
+    },
+  }));
 }
 
 // =============================================================================
@@ -479,177 +461,164 @@ export function encodeControlGoAway(
 // =============================================================================
 
 /**
- * Decode a packed Cap'n Proto message from ArrayBuffer.
+ * Decode an rkyv-encoded envelope from ArrayBuffer.
  */
 export function decodeEnvelope(buffer: ArrayBuffer): DecodedEnvelope {
-  const msg = new Message(buffer, true); // true = packed
-  const envelope = msg.getRoot(Envelope);
+  const envelope = ArchivedEnvelope.decode(new Uint8Array(buffer));
 
   const base = {
-    streamId: envelope.streamId,
-    connectionId: envelope.connectionId,
-    msgSeq: envelope.msgSeq,
+    streamId: envelope.stream_id,
+    connectionId: envelope.connection_id,
+    msgSeq: envelope.msg_seq,
   };
 
-  switch (envelope.which()) {
-    case Envelope_Which.HTTP:
+  const payload = envelope.payload;
+  switch (payload.tag) {
+    case "Http":
       return {
         type: "http",
         ...base,
-        http: decodeHttpMessage(envelope.http),
+        http: decodeHttpMessage(payload.value),
       };
-    case Envelope_Which.WS:
+    case "Ws":
       return {
         type: "ws",
         ...base,
-        ws: decodeWebSocketFrame(envelope.ws),
+        ws: decodeWebSocketFrame(payload.value),
       };
-    case Envelope_Which.CONTROL:
+    case "Control":
       return {
         type: "control",
         ...base,
-        control: decodeControl(envelope.control),
+        control: decodeControl(payload.value),
       };
-    default:
-      throw new Error(`Unknown envelope type: ${envelope.which()}`);
   }
 }
 
 function decodeHttpMessage(http: HttpMessage): DecodedHttpMessage {
-  switch (http.which()) {
-    case HttpMessage_Which.REQUEST_INIT: {
-      const init = http.requestInit;
+  switch (http.tag) {
+    case "RequestInit": {
+      const init = http.value;
       return {
         type: "requestInit",
         data: {
-          timestampMs: init.timestampMs,
+          timestampMs: init.timestamp_ms,
           method: init.method,
           uri: init.uri,
-          version: init.version,
-          headers: decodeHeaders(init.headers),
-          hasBody: init.hasBody,
+          version: init.version.tag,
+          headers: init.headers,
+          hasBody: init.has_body,
         },
       };
     }
-    case HttpMessage_Which.REQUEST_BODY_CHUNK: {
-      const chunk = http.requestBodyChunk;
+    case "RequestBodyChunk": {
+      const chunk = http.value;
       return {
         type: "requestBodyChunk",
         data: {
-          timestampMs: chunk.timestampMs,
-          data: new Uint8Array(chunk.data.toArrayBuffer()),
+          timestampMs: chunk.timestamp_ms,
+          data: chunk.data,
           seq: chunk.seq,
-          isLast: chunk.isLast,
+          isLast: chunk.is_last,
         },
       };
     }
-    case HttpMessage_Which.REQUEST_END:
+    case "RequestEnd":
       return {
         type: "requestEnd",
-        timestampMs: http.requestEnd.timestampMs,
+        timestampMs: http.value.timestamp_ms,
       };
-    case HttpMessage_Which.REQUEST_ABORT:
+    case "RequestAbort":
       return {
         type: "requestAbort",
-        reason: http.requestAbort.reason,
-        detail: http.requestAbort.detail,
+        reason: http.value.reason.tag,
+        detail: http.value.detail,
       };
-    case HttpMessage_Which.RESPONSE_INIT: {
-      const init = http.responseInit;
+    case "ResponseInit": {
+      const init = http.value;
       return {
         type: "responseInit",
         data: {
-          timestampMs: init.timestampMs,
+          timestampMs: init.timestamp_ms,
           status: init.status,
-          headers: decodeHeaders(init.headers),
-          hasBody: init.hasBody,
-          contentLength: init.contentLength,
+          headers: init.headers,
+          hasBody: init.has_body,
+          contentLength: init.content_length,
         },
       };
     }
-    case HttpMessage_Which.RESPONSE_BODY_CHUNK: {
-      const chunk = http.responseBodyChunk;
+    case "ResponseBodyChunk": {
+      const chunk = http.value;
       return {
         type: "responseBodyChunk",
         data: {
-          timestampMs: chunk.timestampMs,
-          data: new Uint8Array(chunk.data.toArrayBuffer()),
+          timestampMs: chunk.timestamp_ms,
+          data: chunk.data,
           seq: chunk.seq,
-          isLast: chunk.isLast,
+          isLast: chunk.is_last,
         },
       };
     }
-    case HttpMessage_Which.RESPONSE_END:
+    case "ResponseEnd":
       return {
         type: "responseEnd",
-        timestampMs: http.responseEnd.timestampMs,
+        timestampMs: http.value.timestamp_ms,
       };
-    case HttpMessage_Which.RESPONSE_ABORT:
+    case "ResponseAbort":
       return {
         type: "responseAbort",
-        reason: http.responseAbort.reason,
-        detail: http.responseAbort.detail,
+        reason: http.value.reason.tag,
+        detail: http.value.detail,
       };
     default:
-      throw new Error(`Unknown HTTP message type: ${http.which()}`);
+      throw new Error(`Unsupported HTTP message type: ${http.tag}`);
   }
 }
 
-function decodeWebSocketFrame(ws: WebSocketFrame): DecodedWebSocketFrame {
+function decodeWebSocketFrame(ws: WireWebSocketFrame): DecodedWebSocketFrame {
   return {
-    timestampMs: ws.timestampMs,
-    opcode: ws.opcode,
+    timestampMs: ws.timestamp_ms,
+    opcode: ws.opcode.tag,
     fin: ws.fin,
-    payload: new Uint8Array(ws.payload.toArrayBuffer()),
-    closeCode: ws.opcode === WebSocketOpcode.CLOSE ? ws.closeCode : undefined,
+    payload: ws.payload,
+    closeCode:
+      ws.opcode.tag === WebSocketOpcode.CLOSE
+        ? (ws.close_code ?? undefined)
+        : undefined,
   };
 }
 
 function decodeControl(control: Control): DecodedControl {
-  switch (control.which()) {
-    case Control_Which.PING:
+  switch (control.tag) {
+    case "Ping":
       return {
         type: "ping",
-        timestampMs: control.ping.timestampMs,
-        data: new Uint8Array(control.ping.data.toArrayBuffer()),
+        timestampMs: control.value.timestamp_ms,
+        data: control.value.data,
       };
-    case Control_Which.PONG:
+    case "Pong":
       return {
         type: "pong",
-        timestampMs: control.pong.timestampMs,
-        data: new Uint8Array(control.pong.data.toArrayBuffer()),
+        timestampMs: control.value.timestamp_ms,
+        data: control.value.data,
       };
-    case Control_Which.ERROR:
+    case "Error":
       return {
         type: "error",
-        timestampMs: control.error.timestampMs,
-        code: control.error.code,
-        message: control.error.message,
+        timestampMs: control.value.timestamp_ms,
+        code: control.value.code,
+        message: control.value.message,
       };
-    case Control_Which.GO_AWAY:
+    case "GoAway":
       return {
         type: "goAway",
-        timestampMs: control.goAway.timestampMs,
-        lastMsgSeq: control.goAway.lastMsgSeq,
-        reason: control.goAway.reason,
+        timestampMs: control.value.timestamp_ms,
+        lastMsgSeq: control.value.last_msg_seq,
+        reason: control.value.reason,
       };
     default:
-      throw new Error(`Unknown control message type: ${control.which()}`);
+      throw new Error(`Unsupported control message type: ${control.tag}`);
   }
-}
-
-function decodeHeaders(
-  headers: import("capnp-es").List<Header>,
-): Array<{ name: string; value: Uint8Array }> {
-  const result: Array<{ name: string; value: Uint8Array }> = [];
-  for (let i = 0; i < headers.length; i++) {
-    const header = headers.get(i);
-    result.push({
-      name: header.name,
-      value: new Uint8Array(header.value.toArrayBuffer()),
-    });
-  }
-  return result;
 }
 
 // =============================================================================
@@ -673,23 +642,5 @@ export function headersFromDecoded(
  * Convert WebSocket opcode to string for logging.
  */
 export function opcodeToString(opcode: WebSocketOpcode): string {
-  switch (opcode) {
-    case WebSocketOpcode.CONTINUATION:
-      return "continuation";
-    case WebSocketOpcode.TEXT:
-      return "text";
-    case WebSocketOpcode.BINARY:
-      return "binary";
-    case WebSocketOpcode.CLOSE:
-      return "close";
-    case WebSocketOpcode.PING:
-      return "ping";
-    case WebSocketOpcode.PONG:
-      return "pong";
-    default:
-      return `unknown(${opcode})`;
-  }
+  return opcode.toLowerCase();
 }
-
-// Re-export types from message.ts for convenience
-export { AbortReason, HttpVersion, WebSocketOpcode };

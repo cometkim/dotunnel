@@ -10,12 +10,12 @@ license = "MIT"
 [dependencies]
 bytes = "1"
 bytesize = "2.1.0"
-capnp = "0.21.7"
 http = "1"
 http-body-util = "0.1"
 next-gen = "0.1.1"
+rkyv = { version = "0.8.14", features = ["bytecheck", "bytes-1"] }
 thiserror = "1.0"
 time = "0.3"
 
 [build-dependencies]
-capnpc = "0.21.4"
+rkyv-js-codegen = "0.1.0"
