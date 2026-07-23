@@ -113,8 +113,23 @@ export type Config = v.InferOutput<typeof ConfigSchema>;
 **Error Handling:**
 
 ```typescript
-// Use better-result for Result types when appropriate
-import { Result } from "better-result";
+// Use flight-result (workspace package: ./packages/flight-result) for Result types.
+// Results are plain discriminated objects - they cross RSC/JSON boundaries
+// as-is with no (de)serialization, and narrow natively on `.status`.
+import { Result } from "flight-result";
+
+const result = await createThing(input);
+if (result.status === "error") return result;
+result.value; // narrowed
+
+// Railway composition: Result.gen passes the yieldable adapter to the body
+Result.gen(async function* ($) {
+  const value = yield* $(await fetchThing(id));
+  return Result.ok(value);
+});
+
+// Domain errors are plain tagged objects (src/app/lib/errors.ts); attach
+// diagnostic causes non-enumerably via withCause so they never serialize.
 ```
 
 ### Rust

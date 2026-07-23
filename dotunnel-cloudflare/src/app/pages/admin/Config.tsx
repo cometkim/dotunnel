@@ -30,7 +30,11 @@ export async function AdminConfig({
           </p>
         </div>
 
-        <ConfigPageClient config={data.config} source={data.source} />
+        <ConfigPageClient
+          config={data.config}
+          source={data.source}
+          configBase64={data.configBase64}
+        />
       </div>
     </AdminLayout>
   );

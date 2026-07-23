@@ -13,11 +13,11 @@ import {
   discoverOIDCEndpoints,
   saveAuthProvider,
 } from "#app/functions/bootstrap.ts";
-import type { AuthProvider, Config } from "#app/models/config.ts";
+import type { AuthProviderInput, PublicConfig } from "#app/models/config.ts";
 import { StepIndicator } from "#app/pages/bootstrap/StepIndicator.tsx";
 
 type AuthProviderStepProps = {
-  config: Config;
+  config: PublicConfig;
 };
 
 type ProviderType = "github" | "google" | "oidc";
@@ -72,7 +72,7 @@ export function AuthProviderStep({
     setError(null);
 
     try {
-      let provider: AuthProvider;
+      let provider: AuthProviderInput;
       const id = crypto.randomUUID();
 
       switch (providerType) {

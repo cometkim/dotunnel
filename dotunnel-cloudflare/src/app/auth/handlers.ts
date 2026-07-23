@@ -1,4 +1,4 @@
-import { loadConfigFromDatabase } from "#app/lib/db.ts";
+import { loadConfig } from "#app/lib/db.ts";
 
 import {
   buildAuthorizationUrl,
@@ -18,6 +18,10 @@ import { findOrCreateUser } from "./user.ts";
 
 /**
  * Handle login request - redirect to OAuth provider.
+ *
+ * When no provider_id is given (e.g. redirected from requireAuth):
+ * - single provider configured: trigger auth with it automatically
+ * - multiple providers: redirect to /login for provider selection
  */
 export async function handleLogin(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -25,16 +29,22 @@ export async function handleLogin(request: Request): Promise<Response> {
   const isBootstrap = url.searchParams.get("bootstrap") === "true";
   const returnTo = url.searchParams.get("return_to") || "/";
 
-  if (!providerId) {
-    return new Response("Missing provider_id", { status: 400 });
-  }
+  const { config } = await loadConfig(import.meta.env.DEV);
 
-  // Load config and find provider
-  const { config } = await loadConfigFromDatabase();
-  const provider = config.auth.providers.find((p) => p.id === providerId);
-
-  if (!provider) {
-    return new Response("Provider not found", { status: 404 });
+  let provider: (typeof config.auth.providers)[number] | undefined;
+  if (providerId) {
+    provider = config.auth.providers.find((p) => p.id === providerId);
+    if (!provider) {
+      return new Response("Provider not found", { status: 404 });
+    }
+  } else if (config.auth.providers.length === 1) {
+    provider = config.auth.providers[0];
+  } else if (config.auth.providers.length > 1) {
+    const loginPageUrl = new URL("/login", url.origin);
+    loginPageUrl.searchParams.set("return_to", returnTo);
+    return Response.redirect(loginPageUrl, 302);
+  } else {
+    return new Response("No auth providers configured", { status: 500 });
   }
 
   // Build callback URL
@@ -42,7 +52,7 @@ export async function handleLogin(request: Request): Promise<Response> {
 
   // Create state for CSRF protection
   const { state, cookie } = createOAuthState(
-    providerId,
+    provider.id,
     isBootstrap ? "/_bootstrap" : returnTo,
     isBootstrap,
   );
@@ -100,7 +110,7 @@ export async function handleCallback(request: Request): Promise<Response> {
 
   try {
     // Load config and find provider
-    const { config } = await loadConfigFromDatabase();
+    const { config } = await loadConfig(import.meta.env.DEV);
     const provider = config.auth.providers.find(
       (p) => p.id === state.providerId,
     );

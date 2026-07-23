@@ -14,6 +14,7 @@ import {
 } from "#app/auth/handlers.ts";
 import type { Session, SessionUser } from "#app/auth/session.ts";
 import { Document } from "#app/Document.tsx";
+import { getProviderDisplayName } from "#app/lib/auth-endpoints.ts";
 import { requireAuth, sessionLoader } from "#app/middlewares/auth.ts";
 import {
   type BootstrapContextFields,
@@ -27,6 +28,7 @@ import { AdminSessionsPage } from "#app/pages/admin/SessionsPage.tsx";
 import { AdminUsersPage } from "#app/pages/admin/UsersPage.tsx";
 import { BootstrapPage } from "#app/pages/Bootstrap.tsx";
 import { DeviceAuthPage } from "#app/pages/DeviceAuth.tsx";
+import { LoginPage } from "#app/pages/Login.tsx";
 import { ServiceDashboard } from "#app/pages/service/Dashboard.tsx";
 
 // =============================================================================
@@ -84,6 +86,26 @@ export default defineApp([
   render(Document, [
     // Public routes
     route("/_bootstrap", BootstrapPage),
+    route("/login", ({ ctx, request }) => {
+      const url = new URL(request.url);
+      const returnTo = url.searchParams.get("return_to") || "/";
+      if (ctx.user) {
+        return Response.redirect(new URL(returnTo, url.origin), 302);
+      }
+      // Strip providers down to display data - full configs contain secrets
+      // biome-ignore lint/style/noNonNullAssertion: guarded by bootstrapGuard
+      const providers = ctx.config!.auth.providers.map((provider) => ({
+        id: provider.id,
+        name: getProviderDisplayName(provider),
+      }));
+      return (
+        <LoginPage
+          providers={providers}
+          returnTo={returnTo}
+          error={url.searchParams.get("error") || undefined}
+        />
+      );
+    }),
 
     // Protected routes (requireAuth ensures user/session exist)
     requireAuth(),

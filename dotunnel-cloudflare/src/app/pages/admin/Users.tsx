@@ -38,7 +38,7 @@ export function UsersPageClient({
     setError(null);
 
     const result = await deleteUser(userId);
-    if (result.isOk()) {
+    if (result.status === "ok") {
       setUsers((prev) => prev.filter((u) => u.id !== userId));
     } else {
       setError(result.error.message);
@@ -55,7 +55,7 @@ export function UsersPageClient({
 
     setError(null);
     const result = await deleteUserSessions(userId);
-    if (result.isErr()) {
+    if (result.status === "error") {
       setError(result.error.message);
     }
   };

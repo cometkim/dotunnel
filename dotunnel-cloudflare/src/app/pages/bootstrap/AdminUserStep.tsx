@@ -8,11 +8,11 @@ import { Key, WarningCircle } from "@phosphor-icons/react";
 import * as React from "react";
 
 import { getProviderDisplayName } from "#app/lib/auth-endpoints.ts";
-import type { Config } from "#app/models/config.ts";
+import type { PublicConfig } from "#app/models/config.ts";
 import { StepIndicator } from "#app/pages/bootstrap/StepIndicator.tsx";
 
 type AdminUserStepProps = {
-  config: Config;
+  config: PublicConfig;
 };
 
 export function AdminUserStep({

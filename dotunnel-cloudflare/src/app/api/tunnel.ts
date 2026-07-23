@@ -146,7 +146,7 @@ async function handleTunnelSelection(
   } else {
     // Create ephemeral tunnel
     const result = await createTunnelForUser(userId, { type: "ephemeral" });
-    if (result.isErr()) {
+    if (result.status === "error") {
       return Response.json(
         {
           error: result.error.message,

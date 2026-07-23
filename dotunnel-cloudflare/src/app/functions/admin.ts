@@ -1,27 +1,28 @@
 "use server";
 
 import { env } from "cloudflare:workers";
-import { Result } from "better-result";
-import {
-  fetchOIDCDiscovery,
-  type OIDCDiscoveryDocument,
-  OIDCDiscoveryError,
-} from "#app/lib/auth-endpoints.ts";
-import {
-  type ConfigContext,
-  exportConfigAsBase64,
-  loadConfig,
-  saveConfig,
-} from "#app/lib/db.ts";
+import { Result } from "flight-result";
+import * as v from "valibot";
+import { exportConfigAsBase64, loadConfig, saveConfig } from "#app/lib/db.ts";
 import { DatabaseError, ValidationError } from "#app/lib/errors.ts";
-import type { AuthProvider, Config } from "#app/models/config.ts";
+import {
+  AuthProvider,
+  type AuthProviderInput,
+  type PublicAuthProvider,
+  type PublicConfig,
+  toPublicConfig,
+  toPublicProvider,
+} from "#app/models/config.ts";
 
 // =============================================================================
 // Types
 // =============================================================================
 
 export type AdminDashboardData = {
-  config: ConfigContext;
+  config: {
+    config: PublicConfig;
+    source: "static" | "database";
+  };
   stats: {
     usersCount: number;
     sessionsCount: number;
@@ -75,7 +76,10 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
   ]);
 
   return {
-    config,
+    config: {
+      config: toPublicConfig(config.config),
+      source: config.source,
+    },
     stats: {
       usersCount: usersResult?.count ?? 0,
       sessionsCount: sessionsResult?.count ?? 0,
@@ -90,71 +94,117 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
 
 /**
  * Get current configuration with export data.
+ *
+ * configBase64 is an intentional secret reveal: the admin copies it into
+ * `wrangler secret put CONFIG` for static deployment.
  */
 export async function getConfigData(): Promise<{
-  config: Config;
+  config: PublicConfig;
   source: "static" | "database";
   configBase64: string;
 }> {
   const result = await loadConfig(import.meta.env.DEV);
   return {
-    config: result.config,
+    config: toPublicConfig(result.config),
     source: result.source,
     configBase64: exportConfigAsBase64(result.config),
   };
 }
 
 /**
- * Save the full configuration (all fields).
- * Used by the unified config page.
+ * A client-editable view of the config.
+ *
+ * The client never holds stored secrets, so instead of round-tripping the
+ * full config it sends a patch: host fields, providers to add (with the
+ * secrets the admin just typed), and stored provider ids to remove.
+ */
+export type ConfigPatch = {
+  serviceHost: string;
+  tunnelHostPattern: string;
+  addProviders: AuthProviderInput[];
+  removeProviderIds: string[];
+};
+
+/**
+ * Apply a config patch from the admin config page.
+ * Secrets of existing providers never leave the server.
  */
 export async function saveFullConfig(
-  config: Config,
+  patch: ConfigPatch,
 ): Promise<
   Result<
-    { config: Config; configBase64: string },
+    { config: PublicConfig; configBase64: string },
     ValidationError | DatabaseError
   >
 > {
-  return Result.gen(async function* () {
+  return Result.gen(async function* ($) {
     // Validate
-    if (!config.service.host) {
+    if (!patch.serviceHost) {
       return Result.err(
-        new ValidationError({
+        ValidationError({
           field: "service.host",
           message: "Service host is required",
         }),
       );
     }
-    if (
-      config.tunnel.hostPattern &&
-      !config.tunnel.hostPattern.startsWith("*.")
-    ) {
+    if (patch.tunnelHostPattern && !patch.tunnelHostPattern.startsWith("*.")) {
       return Result.err(
-        new ValidationError({
+        ValidationError({
           field: "tunnel.hostPattern",
           message: "Tunnel host pattern must start with '*.'",
         }),
       );
     }
+
+    const result = await loadConfig(import.meta.env.DEV);
+    const config = result.config;
+
+    config.service.host = patch.serviceHost;
+    config.tunnel.hostPattern = patch.tunnelHostPattern;
+
+    config.auth.providers = config.auth.providers.filter(
+      (p) => !patch.removeProviderIds.includes(p.id),
+    );
+
+    for (const provider of patch.addProviders) {
+      // Annotate incoming secrets as Redacted before they touch the config
+      const parseResult = v.safeParse(AuthProvider, provider);
+      if (!parseResult.success) {
+        return Result.err(
+          ValidationError({
+            field: "auth.providers",
+            message: `Invalid provider: ${parseResult.issues[0].message}`,
+          }),
+        );
+      }
+      const existingIndex = config.auth.providers.findIndex(
+        (p) => p.id === parseResult.output.id,
+      );
+      if (existingIndex >= 0) {
+        config.auth.providers[existingIndex] = parseResult.output;
+      } else {
+        config.auth.providers.push(parseResult.output);
+      }
+    }
+
     if (config.auth.providers.length === 0) {
       return Result.err(
-        new ValidationError({
+        ValidationError({
           field: "auth.providers",
           message: "At least one auth provider is required",
         }),
       );
     }
 
-    yield* Result.await(
-      Result.tryPromise({
+    yield* $(
+      await Result.tryPromise({
         try: () => saveConfig(config),
-        catch: (e) => new DatabaseError({ operation: "save config", cause: e }),
+        catch: (e) => DatabaseError({ operation: "save config", cause: e }),
       }),
     );
 
     return Result.ok({
-      config,
+      config: toPublicConfig(config),
       configBase64: exportConfigAsBase64(config),
     });
   });
@@ -169,14 +219,14 @@ export async function updateHostsConfig(
   tunnelHostPattern: string,
 ): Promise<
   Result<
-    { config: Config; configBase64: string },
+    { config: PublicConfig; configBase64: string },
     ValidationError | DatabaseError
   >
 > {
-  return Result.gen(async function* () {
+  return Result.gen(async function* ($) {
     if (!serviceHost) {
       return Result.err(
-        new ValidationError({
+        ValidationError({
           field: "serviceHost",
           message: "Service host is required",
         }),
@@ -184,7 +234,7 @@ export async function updateHostsConfig(
     }
     if (!tunnelHostPattern.startsWith("*.")) {
       return Result.err(
-        new ValidationError({
+        ValidationError({
           field: "tunnelHostPattern",
           message: "Tunnel host pattern must start with '*.'",
         }),
@@ -195,16 +245,16 @@ export async function updateHostsConfig(
     result.config.service.host = serviceHost;
     result.config.tunnel.hostPattern = tunnelHostPattern;
 
-    yield* Result.await(
-      Result.tryPromise({
+    yield* $(
+      await Result.tryPromise({
         try: () => saveConfig(result.config),
         catch: (e) =>
-          new DatabaseError({ operation: "update hosts config", cause: e }),
+          DatabaseError({ operation: "update hosts config", cause: e }),
       }),
     );
 
     return Result.ok({
-      config: result.config,
+      config: toPublicConfig(result.config),
       configBase64: exportConfigAsBase64(result.config),
     });
   });
@@ -221,11 +271,11 @@ export async function updateConfig(
   }>,
 ): Promise<
   Result<
-    { config: Config; configBase64: string },
+    { config: PublicConfig; configBase64: string },
     ValidationError | DatabaseError
   >
 > {
-  return Result.gen(async function* () {
+  return Result.gen(async function* ($) {
     const result = await loadConfig(import.meta.env.DEV);
 
     if (updates.serviceHost !== undefined) {
@@ -237,7 +287,7 @@ export async function updateConfig(
         !updates.tunnelHostPattern.startsWith("*.")
       ) {
         return Result.err(
-          new ValidationError({
+          ValidationError({
             field: "tunnelHostPattern",
             message: "Tunnel host pattern must start with '*.'",
           }),
@@ -246,16 +296,15 @@ export async function updateConfig(
       result.config.tunnel.hostPattern = updates.tunnelHostPattern;
     }
 
-    yield* Result.await(
-      Result.tryPromise({
+    yield* $(
+      await Result.tryPromise({
         try: () => saveConfig(result.config),
-        catch: (e) =>
-          new DatabaseError({ operation: "update config", cause: e }),
+        catch: (e) => DatabaseError({ operation: "update config", cause: e }),
       }),
     );
 
     return Result.ok({
-      config: result.config,
+      config: toPublicConfig(result.config),
       configBase64: exportConfigAsBase64(result.config),
     });
   });
@@ -266,36 +315,37 @@ export async function updateConfig(
 // =============================================================================
 
 /**
- * Get all auth providers.
+ * Get all auth providers (public view, no secrets).
  */
-export async function getAuthProviders(): Promise<AuthProvider[]> {
+export async function getAuthProviders(): Promise<PublicAuthProvider[]> {
   const result = await loadConfig(import.meta.env.DEV);
-  return result.config.auth.providers;
+  return result.config.auth.providers.map(toPublicProvider);
 }
 
 /**
  * Add or update an auth provider.
  */
 export async function saveAuthProvider(
-  provider: AuthProvider,
+  provider: AuthProviderInput,
 ): Promise<Result<void, DatabaseError>> {
-  return Result.gen(async function* () {
+  return Result.gen(async function* ($) {
+    const parsed = v.parse(AuthProvider, provider);
     const result = await loadConfig(import.meta.env.DEV);
     const existingIndex = result.config.auth.providers.findIndex(
-      (p) => p.id === provider.id,
+      (p) => p.id === parsed.id,
     );
 
     if (existingIndex >= 0) {
-      result.config.auth.providers[existingIndex] = provider;
+      result.config.auth.providers[existingIndex] = parsed;
     } else {
-      result.config.auth.providers.push(provider);
+      result.config.auth.providers.push(parsed);
     }
 
-    yield* Result.await(
-      Result.tryPromise({
+    yield* $(
+      await Result.tryPromise({
         try: () => saveConfig(result.config),
         catch: (e) =>
-          new DatabaseError({ operation: "save auth provider", cause: e }),
+          DatabaseError({ operation: "save auth provider", cause: e }),
       }),
     );
 
@@ -309,17 +359,17 @@ export async function saveAuthProvider(
 export async function deleteAuthProvider(
   providerId: string,
 ): Promise<Result<void, DatabaseError>> {
-  return Result.gen(async function* () {
+  return Result.gen(async function* ($) {
     const result = await loadConfig(import.meta.env.DEV);
     result.config.auth.providers = result.config.auth.providers.filter(
       (p) => p.id !== providerId,
     );
 
-    yield* Result.await(
-      Result.tryPromise({
+    yield* $(
+      await Result.tryPromise({
         try: () => saveConfig(result.config),
         catch: (e) =>
-          new DatabaseError({ operation: "delete auth provider", cause: e }),
+          DatabaseError({ operation: "delete auth provider", cause: e }),
       }),
     );
 
@@ -328,54 +378,37 @@ export async function deleteAuthProvider(
 }
 
 /**
- * Fetch OIDC discovery document for auto-filling endpoints.
- */
-export async function discoverOIDCEndpoints(
-  issuer: string,
-): Promise<Result<OIDCDiscoveryDocument, OIDCDiscoveryError | DatabaseError>> {
-  return Result.tryPromise({
-    try: () => fetchOIDCDiscovery(issuer),
-    catch: (e) => {
-      if (e instanceof OIDCDiscoveryError) {
-        return e;
-      }
-      return new DatabaseError({
-        operation: "fetch OIDC discovery",
-        cause: e,
-      });
-    },
-  });
-}
-
-/**
  * Add a new auth provider and return updated config.
  */
 export async function addAuthProvider(
-  provider: AuthProvider,
-): Promise<Result<{ config: Config; configBase64: string }, DatabaseError>> {
-  return Result.gen(async function* () {
+  provider: AuthProviderInput,
+): Promise<
+  Result<{ config: PublicConfig; configBase64: string }, DatabaseError>
+> {
+  return Result.gen(async function* ($) {
+    const parsed = v.parse(AuthProvider, provider);
     const result = await loadConfig(import.meta.env.DEV);
 
     // Check for duplicate
     const existingIndex = result.config.auth.providers.findIndex(
-      (p) => p.id === provider.id,
+      (p) => p.id === parsed.id,
     );
     if (existingIndex >= 0) {
-      result.config.auth.providers[existingIndex] = provider;
+      result.config.auth.providers[existingIndex] = parsed;
     } else {
-      result.config.auth.providers.push(provider);
+      result.config.auth.providers.push(parsed);
     }
 
-    yield* Result.await(
-      Result.tryPromise({
+    yield* $(
+      await Result.tryPromise({
         try: () => saveConfig(result.config),
         catch: (e) =>
-          new DatabaseError({ operation: "add auth provider", cause: e }),
+          DatabaseError({ operation: "add auth provider", cause: e }),
       }),
     );
 
     return Result.ok({
-      config: result.config,
+      config: toPublicConfig(result.config),
       configBase64: exportConfigAsBase64(result.config),
     });
   });
@@ -421,9 +454,9 @@ export async function deleteUser(
   const result = await Result.tryPromise({
     try: () =>
       env.DB.prepare("DELETE FROM users WHERE id = ?1").bind(userId).run(),
-    catch: (e) => new DatabaseError({ operation: "delete user", cause: e }),
+    catch: (e) => DatabaseError({ operation: "delete user", cause: e }),
   });
-  return result.map(() => undefined);
+  return Result.map(result, () => undefined);
 }
 
 // =============================================================================
@@ -479,23 +512,23 @@ export async function getSessions(): Promise<AdminSession[]> {
 export async function deleteSession(
   publicId: string,
 ): Promise<Result<void, DatabaseError>> {
-  return Result.gen(async function* () {
+  return Result.gen(async function* ($) {
     // Check if it's a CLI session
-    const session = yield* Result.await(
-      Result.tryPromise({
+    const session = yield* $(
+      await Result.tryPromise({
         try: () =>
           env.DB.prepare("SELECT type FROM sessions WHERE public_id = ?1")
             .bind(publicId)
             .first<{ type: string | null }>(),
         catch: (e) =>
-          new DatabaseError({ operation: "get session type", cause: e }),
+          DatabaseError({ operation: "get session type", cause: e }),
       }),
     );
 
     if (session?.type === "cli") {
       // Soft delete CLI sessions
-      yield* Result.await(
-        Result.tryPromise({
+      yield* $(
+        await Result.tryPromise({
           try: () =>
             env.DB.prepare(
               "UPDATE sessions SET revoked_at = ?1 WHERE public_id = ?2",
@@ -503,19 +536,19 @@ export async function deleteSession(
               .bind(new Date().toISOString(), publicId)
               .run(),
           catch: (e) =>
-            new DatabaseError({ operation: "revoke session", cause: e }),
+            DatabaseError({ operation: "revoke session", cause: e }),
         }),
       );
     } else {
       // Hard delete browser sessions
-      yield* Result.await(
-        Result.tryPromise({
+      yield* $(
+        await Result.tryPromise({
           try: () =>
             env.DB.prepare("DELETE FROM sessions WHERE public_id = ?1")
               .bind(publicId)
               .run(),
           catch: (e) =>
-            new DatabaseError({ operation: "delete session", cause: e }),
+            DatabaseError({ operation: "delete session", cause: e }),
         }),
       );
     }
@@ -536,7 +569,7 @@ export async function deleteUserSessions(
         .bind(userId)
         .run(),
     catch: (e) =>
-      new DatabaseError({ operation: "delete user sessions", cause: e }),
+      DatabaseError({ operation: "delete user sessions", cause: e }),
   });
-  return result.map(() => undefined);
+  return Result.map(result, () => undefined);
 }

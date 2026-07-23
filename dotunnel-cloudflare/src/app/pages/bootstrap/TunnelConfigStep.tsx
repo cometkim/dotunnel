@@ -10,11 +10,11 @@ import { Text } from "@cloudflare/kumo/components/text";
 import { ArrowLeft } from "@phosphor-icons/react";
 import * as React from "react";
 import { saveHostsConfig } from "#app/functions/bootstrap.ts";
-import type { Config } from "#app/models/config.ts";
+import type { PublicConfig } from "#app/models/config.ts";
 import { StepIndicator } from "#app/pages/bootstrap/StepIndicator.tsx";
 
 type TunnelConfigStepProps = {
-  config: Config;
+  config: PublicConfig;
 };
 
 function getZoneName(host: string): string {

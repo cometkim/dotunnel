@@ -3,6 +3,7 @@
   "name": "project",
   "packageManager": "yarn@4.12.0",
   "workspaces": [
+    "_packages/*",
     "dotunnel",
     "dotunnel-cloudflare"
   ],

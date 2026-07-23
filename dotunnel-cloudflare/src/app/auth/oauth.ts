@@ -7,6 +7,7 @@ import {
   GOOGLE_ENDPOINTS,
   OIDC_DEFAULT_SCOPES,
 } from "#app/lib/auth-endpoints.ts";
+import { Redacted } from "#app/lib/redacted.ts";
 import type { AuthProvider } from "#app/models/config.ts";
 
 // =============================================================================
@@ -182,7 +183,8 @@ export async function exchangeCodeForTokens(
   const params = new URLSearchParams();
   params.set("grant_type", "authorization_code");
   params.set("client_id", provider.clientId);
-  params.set("client_secret", provider.clientSecret);
+  // Sanctioned reveal: the token exchange is where the secret is consumed
+  params.set("client_secret", Redacted.value(provider.clientSecret));
   params.set("code", code);
   params.set("redirect_uri", redirectUri);
 

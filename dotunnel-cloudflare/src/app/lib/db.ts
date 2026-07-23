@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import * as v from "valibot";
 
 import { NotBootstrappedError } from "#app/lib/errors.ts";
-import { Config } from "#app/models/config.ts";
+import { Config, serializeConfig } from "#app/models/config.ts";
 
 export type MigrationStatus = {
   migrated: boolean;
@@ -92,7 +92,7 @@ export async function loadConfigFromDatabase(): Promise<ConfigContext> {
     return { config, source: "database" };
   }
 
-  throw new NotBootstrappedError();
+  throw NotBootstrappedError();
 }
 
 /**
@@ -108,7 +108,8 @@ export async function saveConfig(
   await env.DB.prepare(
     "INSERT INTO settings (key, value) VALUES ('config', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
   )
-    .bind(JSON.stringify(validated))
+    // serializeConfig reveals Redacted secrets - persistence is a sanctioned boundary
+    .bind(serializeConfig(validated))
     .run();
 }
 
@@ -142,6 +143,8 @@ export async function getBootstrapStatus(
 export function exportConfigAsBase64(
   config: v.InferOutput<typeof Config>,
 ): string {
-  const json = JSON.stringify(config);
+  // serializeConfig reveals Redacted secrets - this export is handed to the
+  // admin for `wrangler secret put CONFIG` and must contain real values
+  const json = serializeConfig(config);
   return Buffer.from(json, "utf8").toString("base64");
 }

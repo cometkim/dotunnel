@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "name": "flight-result",
+  "version": "0.0.0",
+  "description": "Natively serializable Result type - fully structural, no classes, safe across RSC/JSON/structuredClone boundaries as-is",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

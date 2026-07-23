@@ -1,5 +1,32 @@
 import * as v from "valibot";
 
+import { Redacted } from "#app/lib/redacted.ts";
+
+// =============================================================================
+// Secret Schema
+// =============================================================================
+
+/**
+ * A string secret, annotated as Redacted<string> after parsing.
+ *
+ * Accepts either a plain string (from stored JSON or client form input) or an
+ * already-wrapped Redacted instance (from in-memory config), so parsed configs
+ * can be re-validated without unwrapping.
+ *
+ * Serialization must go through serializeConfig() - JSON.stringify on a
+ * Redacted value throws by design.
+ */
+export const redactedString: v.GenericSchema<
+  string | Redacted<string>,
+  Redacted<string>
+> = v.union([
+  v.custom<Redacted<string>>((input) => Redacted.is(input)),
+  v.pipe(
+    v.string(),
+    v.transform((value) => Redacted.make(value)),
+  ),
+]);
+
 // =============================================================================
 // Auth Provider Schemas (Discriminated Union)
 // =============================================================================
@@ -12,7 +39,7 @@ export const GitHubAuthProvider = v.object({
   id: v.string(),
   type: v.literal("github"),
   clientId: v.string(),
-  clientSecret: v.string(),
+  clientSecret: redactedString,
 });
 
 /**
@@ -23,7 +50,7 @@ export const GoogleAuthProvider = v.object({
   id: v.string(),
   type: v.literal("google"),
   clientId: v.string(),
-  clientSecret: v.string(),
+  clientSecret: redactedString,
 });
 
 /**
@@ -38,7 +65,7 @@ export const OIDCAuthProvider = v.object({
   /** OIDC issuer URL (e.g., "https://mytenant.auth0.com") */
   issuer: v.string(),
   clientId: v.string(),
-  clientSecret: v.string(),
+  clientSecret: redactedString,
   /** OAuth scopes. Defaults to ['openid', 'email', 'profile'] if not specified */
   scopes: v.optional(v.array(v.string())),
   /** Authorization endpoint from OIDC discovery */
@@ -65,6 +92,48 @@ export type AuthProvider = v.InferOutput<typeof AuthProvider>;
 export type GitHubAuthProvider = v.InferOutput<typeof GitHubAuthProvider>;
 export type GoogleAuthProvider = v.InferOutput<typeof GoogleAuthProvider>;
 export type OIDCAuthProvider = v.InferOutput<typeof OIDCAuthProvider>;
+
+/**
+ * Wire format for creating/updating a provider (e.g. from a client form).
+ * clientSecret is a plain string here; parse with the AuthProvider schema
+ * to get a Redacted-annotated provider before storing or using it.
+ */
+export type AuthProviderInput = v.InferInput<typeof AuthProvider>;
+
+// =============================================================================
+// Public (Client-Safe) Views
+// =============================================================================
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never;
+
+/**
+ * Provider without its secret. This is the ONLY provider shape that may
+ * cross the RSC boundary (client component props, "use server" returns).
+ */
+export type PublicAuthProvider = DistributiveOmit<AuthProvider, "clientSecret">;
+
+/**
+ * Config without secrets, safe to serialize to the client.
+ */
+export type PublicConfig = Omit<Config, "auth"> & {
+  auth: { providers: PublicAuthProvider[] };
+};
+
+export function toPublicProvider(provider: AuthProvider): PublicAuthProvider {
+  const { clientSecret: _clientSecret, ...publicProvider } = provider;
+  return publicProvider as PublicAuthProvider;
+}
+
+export function toPublicConfig(config: Config): PublicConfig {
+  return {
+    ...config,
+    auth: {
+      providers: config.auth.providers.map(toPublicProvider),
+    },
+  };
+}
 
 // =============================================================================
 // Main Config Schema
@@ -134,6 +203,26 @@ export function createDefaultConfig(): Config {
       hostPattern: "",
     },
   };
+}
+
+/**
+ * Serialize a config to its stored JSON form, revealing secrets.
+ *
+ * This is the ONLY sanctioned path from Redacted secrets back to plaintext,
+ * used for persistence (D1 settings row, CONFIG secret export). A plain
+ * JSON.stringify(config) throws because of Redacted's toJSON guard.
+ */
+export function serializeConfig(config: Config): string {
+  const stored = {
+    ...config,
+    auth: {
+      providers: config.auth.providers.map((provider) => ({
+        ...provider,
+        clientSecret: Redacted.value(provider.clientSecret),
+      })),
+    },
+  };
+  return JSON.stringify(stored);
 }
 
 /**

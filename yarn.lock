@@ -447,27 +447,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@clack/core@npm:0.5.0":
-  version: 0.5.0
-  resolution: "@clack/core@npm:0.5.0"
-  dependencies:
-    picocolors: "npm:^1.0.0"
-    sisteransi: "npm:^1.0.5"
-  checksum: 10c0/ef55dce4b0a4802171b71fe595865a6452c7cf823d162df7fa9afe2ea5a594b9d97e0b8e2880c2a805f2ce1d2f782cb1637d9f8d2ab8b99010af3a20816fae5a
-  languageName: node
-  linkType: hard
-
-"@clack/prompts@npm:^0.11.0":
-  version: 0.11.0
-  resolution: "@clack/prompts@npm:0.11.0"
-  dependencies:
-    "@clack/core": "npm:0.5.0"
-    picocolors: "npm:^1.0.0"
-    sisteransi: "npm:^1.0.5"
-  checksum: 10c0/4c573f2adec3b9109fe861e36312be8ae7cc6e80a5128aa784b9aeafeda5001b23f66c08eca50f4491119b435d9587ec9862956be8c5be472ec3373275003ba8
-  languageName: node
-  linkType: hard
-
 "@cloudflare/kumo@npm:^1.5.0":
   version: 1.5.0
   resolution: "@cloudflare/kumo@npm:1.5.0"
@@ -2295,17 +2274,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"better-result@npm:^2.6.0":
-  version: 2.6.0
-  resolution: "better-result@npm:2.6.0"
-  dependencies:
-    "@clack/prompts": "npm:^0.11.0"
-  bin:
-    better-result: bin/cli.mjs
-  checksum: 10c0/b3bb6b6dfdbb51c43fca15926a53b3edd118e678806daba5d03c689a1b84766397fc7825583e012c721da0bd4fd3a8b30ca03b494e80025d757708ff20fa89f0
-  languageName: node
-  linkType: hard
-
 "bl@npm:^1.0.0":
   version: 1.2.3
   resolution: "bl@npm:1.2.3"
@@ -2832,10 +2800,10 @@ __metadata:
     "@typescript/native-preview": "catalog:"
     "@vitejs/plugin-react": "npm:^5.1.2"
     babel-plugin-react-compiler: "npm:^1.0.0"
-    better-result: "npm:^2.6.0"
     class-variance-authority: "npm:^0.7.1"
     cookie-es: "npm:^2.0.0"
     dotunnel: "workspace:^"
+    flight-result: "workspace:^"
     jose: "npm:^6.1.3"
     react: "catalog:react"
     react-dom: "catalog:react"
@@ -3333,6 +3301,12 @@ __metadata:
   checksum: 10c0/4c6d2cb92f74bd42ec7344c881a46f6455010d3993f8f55b09bb64298c0a13e11e10200147624db8938590890a15ade69c40f0172698388d0999899f0f2a70a5
   languageName: node
   linkType: hard
+
+"flight-result@workspace:^, flight-result@workspace:_packages/flight-result":
+  version: 0.0.0-use.local
+  resolution: "flight-result@workspace:_packages/flight-result"
+  languageName: unknown
+  linkType: soft
 
 "for-each@npm:^0.3.5":
   version: 0.3.5
@@ -5133,7 +5107,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"picocolors@npm:^1.0.0, picocolors@npm:^1.1.1, picocolors@npm:~1.1.1":
+"picocolors@npm:^1.1.1, picocolors@npm:~1.1.1":
   version: 1.1.1
   resolution: "picocolors@npm:1.1.1"
   checksum: 10c0/e2e3e8170ab9d7c7421969adaa7e1b31434f789afb9b3f115f6b96d91945041ac3ceb02e9ec6fe6510ff036bcc0bf91e69a1772edc0b707e12b19c0f2d6bcf58
@@ -5865,13 +5839,6 @@ __metadata:
   version: 4.1.0
   resolution: "signal-exit@npm:4.1.0"
   checksum: 10c0/41602dce540e46d599edba9d9860193398d135f7ff72cab629db5171516cfae628d21e7bfccde1bbfdf11c48726bc2a6d1a8fb8701125852fbfda7cf19c6aa83
-  languageName: node
-  linkType: hard
-
-"sisteransi@npm:^1.0.5":
-  version: 1.0.5
-  resolution: "sisteransi@npm:1.0.5"
-  checksum: 10c0/230ac975cca485b7f6fe2b96a711aa62a6a26ead3e6fb8ba17c5a00d61b8bed0d7adc21f5626b70d7c33c62ff4e63933017a6462942c719d1980bb0b1207ad46
   languageName: node
   linkType: hard
 

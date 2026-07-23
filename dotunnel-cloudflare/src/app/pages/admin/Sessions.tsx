@@ -43,7 +43,7 @@ export function SessionsPageClient({
     setError(null);
 
     const result = await deleteSession(publicId);
-    if (result.isOk()) {
+    if (result.status === "ok") {
       if (publicId === currentSessionId) {
         window.location.href = "/_auth/logout";
       } else if (isCli) {

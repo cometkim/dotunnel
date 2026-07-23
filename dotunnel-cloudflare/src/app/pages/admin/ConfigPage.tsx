@@ -20,21 +20,19 @@ import {
   Trash,
 } from "@phosphor-icons/react";
 import * as React from "react";
-import { discoverOIDCEndpoints, saveFullConfig } from "#app/functions/admin.ts";
+import { saveFullConfig } from "#app/functions/admin.ts";
+import { discoverOIDCEndpoints } from "#app/functions/bootstrap.ts";
 import { getProviderDisplayName } from "#app/lib/auth-endpoints.ts";
-import type { AuthProvider, Config } from "#app/models/config.ts";
-
-/**
- * Encode config as base64 JSON (client-side).
- */
-function encodeConfigBase64(config: Config): string {
-  const json = JSON.stringify(config);
-  return btoa(json);
-}
+import type {
+  AuthProviderInput,
+  PublicAuthProvider,
+  PublicConfig,
+} from "#app/models/config.ts";
 
 type ConfigPageClientProps = {
-  config: Config;
+  config: PublicConfig;
   source: "static" | "database";
+  configBase64: string;
 };
 
 function getZoneName(host: string): string {
@@ -45,11 +43,20 @@ function getZoneName(host: string): string {
   return host;
 }
 
+/**
+ * Strip the just-typed secret from a pending provider for display.
+ */
+function toDisplayProvider(provider: AuthProviderInput): PublicAuthProvider {
+  const { clientSecret: _clientSecret, ...publicProvider } = provider;
+  return publicProvider as PublicAuthProvider;
+}
+
 type ProviderType = "github" | "google" | "oidc";
 
 export function ConfigPageClient({
   config: initialConfig,
   source,
+  configBase64: initialConfigBase64,
 }: ConfigPageClientProps): React.ReactElement {
   // Editable config state
   const [serviceHost, setServiceHost] = React.useState(
@@ -58,12 +65,24 @@ export function ConfigPageClient({
   const [tunnelHostPattern, setTunnelHostPattern] = React.useState(
     initialConfig.tunnel.hostPattern,
   );
-  const [providers, setProviders] = React.useState<AuthProvider[]>(
-    initialConfig.auth.providers,
-  );
 
-  // Saved state reference (to compare for changes)
+  // Stored provider secrets never reach the client, so provider edits are
+  // tracked as a patch (adds with just-typed secrets + removals by id)
+  // instead of a full editable config.
+  const [pendingAdds, setPendingAdds] = React.useState<AuthProviderInput[]>([]);
+  const [removedIds, setRemovedIds] = React.useState<string[]>([]);
+
+  // Last-saved state, as returned by the server
   const [savedConfig, setSavedConfig] = React.useState(initialConfig);
+  const [savedBase64, setSavedBase64] = React.useState(initialConfigBase64);
+
+  const providers: PublicAuthProvider[] = React.useMemo(
+    () => [
+      ...savedConfig.auth.providers.filter((p) => !removedIds.includes(p.id)),
+      ...pendingAdds.map(toDisplayProvider),
+    ],
+    [savedConfig, removedIds, pendingAdds],
+  );
 
   // UI state
   const [isSaving, setIsSaving] = React.useState(false);
@@ -86,31 +105,16 @@ export function ConfigPageClient({
   const [userinfoEndpoint, setUserinfoEndpoint] = React.useState("");
   const [jwksUri, setJwksUri] = React.useState("");
 
-  // Compute current config from state
-  const currentConfig: Config = React.useMemo(
-    () => ({
-      ...savedConfig,
-      service: { host: serviceHost },
-      tunnel: { hostPattern: tunnelHostPattern },
-      auth: { providers },
-    }),
-    [savedConfig, serviceHost, tunnelHostPattern, providers],
-  );
-
   // Track if there are unsaved changes
-  const hasChanges = React.useMemo(() => {
-    return JSON.stringify(currentConfig) !== JSON.stringify(savedConfig);
-  }, [currentConfig, savedConfig]);
+  const hasChanges =
+    pendingAdds.length > 0 ||
+    removedIds.length > 0 ||
+    serviceHost !== savedConfig.service.host ||
+    tunnelHostPattern !== savedConfig.tunnel.hostPattern;
 
   // Validation
   const isValid =
     serviceHost && (!tunnelHostPattern || tunnelHostPattern.startsWith("*."));
-
-  // Compute live base64 preview (client-side)
-  const liveBase64 = React.useMemo(
-    () => encodeConfigBase64(currentConfig),
-    [currentConfig],
-  );
 
   // Navigation guard for unsaved changes
   React.useEffect(() => {
@@ -172,13 +176,13 @@ export function ConfigPageClient({
     setError(null);
 
     const result = await discoverOIDCEndpoints(issuer);
-    if (result.isOk()) {
-      setAuthorizationEndpoint(result.value.authorization_endpoint);
-      setTokenEndpoint(result.value.token_endpoint);
-      setUserinfoEndpoint(result.value.userinfo_endpoint ?? "");
-      setJwksUri(result.value.jwks_uri);
+    if (result.success) {
+      setAuthorizationEndpoint(result.discovery.authorization_endpoint);
+      setTokenEndpoint(result.discovery.token_endpoint);
+      setUserinfoEndpoint(result.discovery.userinfo_endpoint ?? "");
+      setJwksUri(result.discovery.jwks_uri);
     } else {
-      setError(result.error.message);
+      setError(result.error);
     }
     setIsFetchingDiscovery(false);
   };
@@ -187,7 +191,7 @@ export function ConfigPageClient({
     e.preventDefault();
     setError(null);
 
-    let provider: AuthProvider;
+    let provider: AuthProviderInput;
     const id = crypto.randomUUID();
 
     switch (providerType) {
@@ -217,7 +221,7 @@ export function ConfigPageClient({
         break;
     }
 
-    setProviders([...providers, provider]);
+    setPendingAdds([...pendingAdds, provider]);
     resetProviderForm();
     setShowAddForm(false);
   };
@@ -228,11 +232,17 @@ export function ConfigPageClient({
       return;
     }
 
+    // Not yet saved - just drop the pending addition
+    if (pendingAdds.some((p) => p.id === providerId)) {
+      setPendingAdds(pendingAdds.filter((p) => p.id !== providerId));
+      return;
+    }
+
     if (!confirm("Are you sure you want to delete this provider?")) {
       return;
     }
 
-    setProviders(providers.filter((p) => p.id !== providerId));
+    setRemovedIds([...removedIds, providerId]);
   };
 
   const handleSave = async () => {
@@ -245,9 +255,17 @@ export function ConfigPageClient({
     setError(null);
     setSuccess(null);
 
-    const result = await saveFullConfig(currentConfig);
-    if (result.isOk()) {
+    const result = await saveFullConfig({
+      serviceHost,
+      tunnelHostPattern,
+      addProviders: pendingAdds,
+      removeProviderIds: removedIds,
+    });
+    if (result.status === "ok") {
       setSavedConfig(result.value.config);
+      setSavedBase64(result.value.configBase64);
+      setPendingAdds([]);
+      setRemovedIds([]);
       setSuccess("Configuration saved successfully");
     } else {
       setError(result.error.message);
@@ -257,12 +275,12 @@ export function ConfigPageClient({
 
   const handleCopyConfig = async () => {
     try {
-      await navigator.clipboard.writeText(liveBase64);
+      await navigator.clipboard.writeText(savedBase64);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
     } catch {
       const textArea = document.createElement("textarea");
-      textArea.value = liveBase64;
+      textArea.value = savedBase64;
       document.body.appendChild(textArea);
       textArea.select();
       document.execCommand("copy");
@@ -272,7 +290,7 @@ export function ConfigPageClient({
     }
   };
 
-  const getProviderDetails = (provider: AuthProvider) => {
+  const getProviderDetails = (provider: PublicAuthProvider) => {
     switch (provider.type) {
       case "github":
         return { issuer: "github.com", clientId: provider.clientId };
@@ -684,9 +702,15 @@ export function ConfigPageClient({
           {/* Base64 Preview */}
           <div className="space-y-2">
             <Label>Base64-encoded Configuration</Label>
+            {hasChanges && (
+              <p className="text-xs text-kumo-subtle">
+                Reflects the last saved configuration &mdash; save your changes
+                to refresh it.
+              </p>
+            )}
             <div className="relative">
               <div className="rounded-md bg-kumo-elevated p-3 pr-12 font-mono text-xs break-all max-h-32 overflow-auto">
-                {liveBase64}
+                {savedBase64}
               </div>
               <Button
                 type="button"

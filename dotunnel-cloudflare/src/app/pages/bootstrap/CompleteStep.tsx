@@ -10,11 +10,11 @@ import { ArrowSquareOut, Check, Copy } from "@phosphor-icons/react";
 import * as React from "react";
 import { completeBootstrap } from "#app/functions/bootstrap.ts";
 import { getProviderDisplayName } from "#app/lib/auth-endpoints.ts";
-import type { Config } from "#app/models/config.ts";
+import type { PublicConfig } from "#app/models/config.ts";
 import { StepIndicator } from "#app/pages/bootstrap/StepIndicator.tsx";
 
 type CompleteStepProps = {
-  config: Config;
+  config: PublicConfig;
   configBase64: string;
 };
 
@@ -62,8 +62,8 @@ export function CompleteStep({
     try {
       const result = await completeBootstrap();
       if (result.success) {
-        // Redirect to dashboard
-        window.location.href = "/";
+        // Redirect to the admin dashboard
+        window.location.href = "/admin";
       } else {
         setError(result.error);
       }

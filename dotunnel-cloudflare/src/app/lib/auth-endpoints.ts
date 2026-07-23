@@ -1,4 +1,9 @@
-import type { AuthProvider, OIDCAuthProvider } from "#app/models/config.ts";
+import { Redacted } from "#app/lib/redacted.ts";
+import type {
+  AuthProvider,
+  OIDCAuthProvider,
+  PublicAuthProvider,
+} from "#app/models/config.ts";
 
 // =============================================================================
 // Hardcoded Endpoints for GitHub and Google
@@ -182,7 +187,9 @@ export function getProviderScopes(provider: AuthProvider): readonly string[] {
 /**
  * Get display name for an auth provider.
  */
-export function getProviderDisplayName(provider: AuthProvider): string {
+export function getProviderDisplayName(
+  provider: AuthProvider | PublicAuthProvider,
+): string {
   switch (provider.type) {
     case "github":
       return "GitHub";
@@ -218,7 +225,7 @@ export function createOIDCProviderFromDiscovery(
     name,
     issuer: discovery.issuer || issuer,
     clientId,
-    clientSecret,
+    clientSecret: Redacted.make(clientSecret),
     scopes,
     authorizationEndpoint: discovery.authorization_endpoint,
     tokenEndpoint: discovery.token_endpoint,

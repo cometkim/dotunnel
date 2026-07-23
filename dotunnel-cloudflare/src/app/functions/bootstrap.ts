@@ -1,6 +1,7 @@
 "use server";
 
 import { env } from "cloudflare:workers";
+import * as v from "valibot";
 import {
   fetchOIDCDiscovery,
   type OIDCDiscoveryDocument,
@@ -15,9 +16,12 @@ import {
   saveConfig,
 } from "#app/lib/db.ts";
 import {
-  type AuthProvider,
+  AuthProvider,
+  type AuthProviderInput,
   type Config,
   createDefaultConfig,
+  type PublicConfig,
+  toPublicConfig,
 } from "#app/models/config.ts";
 
 // =============================================================================
@@ -26,10 +30,10 @@ import {
 
 export type BootstrapState =
   | { step: "migration"; migrationStatus: MigrationStatus }
-  | { step: "auth"; config: Config }
-  | { step: "admin"; config: Config }
-  | { step: "tunnel"; config: Config }
-  | { step: "complete"; config: Config; configBase64: string }
+  | { step: "auth"; config: PublicConfig }
+  | { step: "admin"; config: PublicConfig }
+  | { step: "tunnel"; config: PublicConfig }
+  | { step: "complete"; config: PublicConfig; configBase64: string }
   | { step: "done" };
 
 // =============================================================================
@@ -68,24 +72,24 @@ export async function getBootstrapState(): Promise<BootstrapState> {
 
   // Determine which step based on config state
   if (config.auth.providers.length === 0) {
-    return { step: "auth", config };
+    return { step: "auth", config: toPublicConfig(config) };
   }
 
   // Check if admin user exists
   const hasAdmin = await checkAdminExists();
   if (!hasAdmin) {
-    return { step: "admin", config };
+    return { step: "admin", config: toPublicConfig(config) };
   }
 
   if (!config.service.host || !config.tunnel.hostPattern) {
-    return { step: "tunnel", config };
+    return { step: "tunnel", config: toPublicConfig(config) };
   }
 
   // All steps complete, ready to finalize
   const finalConfig = { ...config, bootstrapped: true };
   return {
     step: "complete",
-    config: finalConfig,
+    config: toPublicConfig(finalConfig),
     configBase64: exportConfigAsBase64(finalConfig),
   };
 }
@@ -130,11 +134,14 @@ export async function discoverOIDCEndpoints(
  * Save auth provider configuration.
  */
 export async function saveAuthProvider(
-  provider: AuthProvider,
+  provider: AuthProviderInput,
 ): Promise<
-  { success: true; config: Config } | { success: false; error: string }
+  { success: true; config: PublicConfig } | { success: false; error: string }
 > {
   try {
+    // Annotate the incoming secret as Redacted before anything else
+    const parsed = v.parse(AuthProvider, provider);
+
     // Load current config or create default
     let config: Config;
     try {
@@ -150,18 +157,18 @@ export async function saveAuthProvider(
 
     // Add or update provider
     const existingIndex = config.auth.providers.findIndex(
-      (p) => p.id === provider.id,
+      (p) => p.id === parsed.id,
     );
     if (existingIndex >= 0) {
-      config.auth.providers[existingIndex] = provider;
+      config.auth.providers[existingIndex] = parsed;
     } else {
-      config.auth.providers.push(provider);
+      config.auth.providers.push(parsed);
     }
 
     // Save to database
     await saveConfig(config);
 
-    return { success: true, config };
+    return { success: true, config: toPublicConfig(config) };
   } catch (error) {
     console.error("Failed to save auth provider:", error);
     return {
@@ -177,7 +184,7 @@ export async function saveAuthProvider(
 export async function removeAuthProvider(
   providerId: string,
 ): Promise<
-  { success: true; config: Config } | { success: false; error: string }
+  { success: true; config: PublicConfig } | { success: false; error: string }
 > {
   try {
     const result = await loadConfigFromDatabase();
@@ -188,7 +195,7 @@ export async function removeAuthProvider(
     );
 
     await saveConfig(config);
-    return { success: true, config };
+    return { success: true, config: toPublicConfig(config) };
   } catch (error) {
     console.error("Failed to remove auth provider:", error);
     return {
@@ -240,7 +247,7 @@ export async function saveHostsConfig(
   serviceHost: string,
   tunnelHostPattern: string,
 ): Promise<
-  { success: true; config: Config } | { success: false; error: string }
+  { success: true; config: PublicConfig } | { success: false; error: string }
 > {
   try {
     // Validate service host
@@ -266,7 +273,7 @@ export async function saveHostsConfig(
     config.tunnel.hostPattern = tunnelHostPattern;
 
     await saveConfig(config);
-    return { success: true, config };
+    return { success: true, config: toPublicConfig(config) };
   } catch (error) {
     console.error("Failed to save hosts config:", error);
     return {
@@ -286,7 +293,7 @@ export async function saveHostsConfig(
  * Marks the config as bootstrapped and returns the base64 config for deployment.
  */
 export async function completeBootstrap(): Promise<
-  | { success: true; config: Config; configBase64: string }
+  | { success: true; config: PublicConfig; configBase64: string }
   | { success: false; error: string }
 > {
   try {
@@ -320,7 +327,7 @@ export async function completeBootstrap(): Promise<
 
     return {
       success: true,
-      config,
+      config: toPublicConfig(config),
       configBase64: exportConfigAsBase64(config),
     };
   } catch (error) {
