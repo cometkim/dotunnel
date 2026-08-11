@@ -1,16 +1,23 @@
 {
   "private": true,
   "name": "project",
-  "packageManager": "yarn@4.12.0",
+  "type": "module",
   "workspaces": [
     "_packages/*",
     "dotunnel",
     "dotunnel-cloudflare"
   ],
+  "scripts": {
+    "dev:cert": "node _dev/certs.mjs",
+    "dev:seed": "node _dev/seed.mjs",
+    "dev:proxy": "node _dev/proxy.mjs"
+  },
   "resolutions": {
     "esbuild": "^0.27.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "catalog:"
-  }
+    "@biomejs/biome": "catalog:",
+    "@expo/devcert": "patch:@expo/devcert@npm%3A1.2.1#~/.yarn/patches/@expo-devcert-npm-1.2.1-3bebd72189.patch"
+  },
+  "packageManager": "yarn@4.18.0"
 }

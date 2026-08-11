@@ -1,11 +1,10 @@
 /**
  * Redacted<T> - a wrapper for secret values (API keys, client secrets, tokens).
  *
- * The wrapped value lives in a module-private WeakMap, NOT as a property of
- * the instance. This means no enumeration, spread, JSON serialization, or
- * structured clone can ever reach it. The only way to read the value is an
- * explicit `Redacted.value()` call, which makes every secret exposure
- * greppable and reviewable.
+ * The wrapped value lives in a JS #private field: not an own property, so no
+ * enumeration, spread, JSON serialization, or structured clone can ever reach
+ * it. The only way to read the value is an explicit `Redacted.value()` call,
+ * which makes every secret exposure greppable and reviewable.
  *
  * Failure modes are deliberately loud:
  * - `JSON.stringify` on anything containing a Redacted throws (via `toJSON`),
@@ -15,26 +14,26 @@
  *   "use server" return values) throws in React Flight, since class
  *   instances are not serializable.
  * - `console.log` / string interpolation render "<redacted>".
+ *
+ * The #private field also makes the type nominal: a structurally-forged
+ * object neither satisfies `Redacted<T>` in TypeScript nor passes the
+ * runtime `#value in` brand checks.
  */
-
-const values = new WeakMap<Redacted<unknown>, unknown>();
 
 const REDACTED_LABEL = "<redacted>";
 
 export class Redacted<T> {
-  // Phantom field: makes Redacted<string> and Redacted<number> incompatible
-  // and blocks structural forgery. `declare` emits no runtime code.
-  private declare readonly __value: T;
+  #value: T;
 
-  private constructor() {}
+  constructor(value: T) {
+    this.#value = value;
+  }
 
   /**
-   * Wrap a secret value. This is the only way to construct a Redacted.
+   * Wrap a secret value.
    */
   static make<T>(value: T): Redacted<T> {
-    const redacted = new Redacted<T>();
-    values.set(redacted, value);
-    return redacted;
+    return new Redacted(value);
   }
 
   /**
@@ -42,16 +41,16 @@ export class Redacted<T> {
    * the secret is actually consumed (persistence, outgoing auth requests).
    */
   static value<T>(redacted: Redacted<T>): T {
-    if (!values.has(redacted)) {
+    if (!(#value in redacted)) {
       throw new TypeError(
-        "Redacted.value() called on a value that is not a live Redacted instance",
+        "Redacted.value() called on a value that is not a Redacted instance",
       );
     }
-    return values.get(redacted) as T;
+    return redacted.#value;
   }
 
   static is(value: unknown): value is Redacted<unknown> {
-    return value instanceof Redacted && values.has(value);
+    return typeof value === "object" && value !== null && #value in value;
   }
 
   toString(): string {

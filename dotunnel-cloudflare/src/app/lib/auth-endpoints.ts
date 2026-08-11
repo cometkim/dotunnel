@@ -114,12 +114,12 @@ export async function fetchOIDCDiscovery(
 }
 
 export class OIDCDiscoveryError extends Error {
-  constructor(
-    message: string,
-    public readonly issuer: string,
-  ) {
+  issuer: string;
+
+  constructor(message: string, issuer: string) {
     super(message);
     this.name = "OIDCDiscoveryError";
+    this.issuer = issuer;
   }
 }
 

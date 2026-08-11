@@ -1,0 +1,25 @@
+#!/usr/bin/env zsh
+
+# Run the CLI against the local relay with an isolated config home,
+# so ~/.config/dotunnel (your real relay credentials) is never read or written.
+#
+# ```
+# ./dev/dotunnel tunnel --port 8000 --subdomain test
+# ```
+#
+# Falls back to the debug build; pass DOTUNNEL_BIN to use a release build.
+set -e
+
+DEV_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+BIN=${DOTUNNEL_BIN:-"$DEV_DIR/../target/debug/dotunnel"}
+
+if [ ! -x "$BIN" ]; then
+  echo "dotunnel binary not found at $BIN" >&2
+  echo "build it first:  cargo build -p dotunnel-cli" >&2
+  exit 1
+fi
+
+XDG_CONFIG_HOME="$DEV_DIR/.home"
+export XDG_CONFIG_HOME
+
+exec "$BIN" "$@"

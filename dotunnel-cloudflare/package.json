@@ -11,13 +11,14 @@
     "generate": "rw-scripts ensure-env && wrangler types",
     "dev": "vite dev",
     "build": "vite build",
-    "check:types": "tsgo",
+    "check:types": "tsc",
     "check:format": "biome format",
     "check:lint": "biome lint"
   },
   "dependencies": {
     "@cloudflare/kumo": "^1.5.0",
     "@phosphor-icons/react": "^2.1.10",
+    "capnweb": "^0.10.0",
     "class-variance-authority": "^0.7.1",
     "cookie-es": "^2.0.0",
     "dotunnel": "workspace:^",
@@ -28,21 +29,23 @@
     "react-server-dom-webpack": "catalog:react",
     "rwsdk": "catalog:",
     "tailwind-merge": "^3.4.0",
-    "tailwindcss": "^4.1.18",
+    "tailwindcss": "^4.3.3",
     "valibot": "^1.2.0"
   },
   "devDependencies": {
+    "@babel/core": "^8.0.1",
     "@biomejs/biome": "catalog:",
-    "@cloudflare/vite-plugin": "^1.22.0",
-    "@tailwindcss/vite": "^4.1.18",
+    "@cloudflare/vite-plugin": "^1.47.0",
+    "@rolldown/plugin-babel": "^0.2.3",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/babel__core": "^7.20.5",
     "@types/node": "^25.0.6",
     "@types/react": "catalog:react",
     "@types/react-dom": "catalog:react",
-    "@typescript/native-preview": "catalog:",
-    "@vitejs/plugin-react": "^5.1.2",
+    "@vitejs/plugin-react": "^6.0.4",
     "babel-plugin-react-compiler": "^1.0.0",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.1",
-    "wrangler": "^4.61.0"
+    "typescript": "catalog:",
+    "vite": "^8.1.5",
+    "wrangler": "^4.120.0"
   }
 }

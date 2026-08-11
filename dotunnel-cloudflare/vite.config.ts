@@ -1,6 +1,7 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { redwood } from "rwsdk/vite";
 import { defineConfig } from "vite";
 
@@ -12,11 +13,8 @@ export default defineConfig({
     ssr: {},
   },
   plugins: [
-    react({
-      babel: {
-        plugins: ["babel-plugin-react-compiler"],
-      },
-    }),
+    react(),
+    babel({ presets: [reactCompilerPreset()] }),
     cloudflare({
       viteEnvironment: { name: "worker" },
     }),

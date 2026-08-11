@@ -1,0 +1,26 @@
+diff --git a/dist/certificate-authority.js b/dist/certificate-authority.js
+index 9e04b8f49f27f92df1709c94b8cd84c51942bc49..216e5289cf003536588a7f4bfc4d1c269a4e8491 100644
+--- a/dist/certificate-authority.js
++++ b/dist/certificate-authority.js
+@@ -20,7 +20,7 @@ const debug = (0, debug_1.default)('devcert:certificate-authority');
+  */
+ async function installCertificateAuthority(options = {}) {
+     debug(`Uninstalling existing certificates, which will be void once any existing CA is gone`);
+-    uninstall();
++    await uninstall();
+     (0, constants_1.ensureConfigDirs)();
+     debug(`Making a temp working directory for files to copied in`);
+     let rootKeyPath = (0, utils_1.mktmp)();
+diff --git a/src/certificate-authority.ts b/src/certificate-authority.ts
+index b41127a474af01df1ba1f54f55365d79ff1db3f2..7e1bfeece01108d57bef9e1db3bdf7b26d54d4ac 100644
+--- a/src/certificate-authority.ts
++++ b/src/certificate-authority.ts
+@@ -30,7 +30,7 @@ const debug = createDebug('devcert:certificate-authority');
+  */
+ export default async function installCertificateAuthority(options: Options = {}): Promise<void> {
+   debug(`Uninstalling existing certificates, which will be void once any existing CA is gone`);
+-  uninstall();
++  await uninstall();
+   ensureConfigDirs();
+ 
+   debug(`Making a temp working directory for files to copied in`);

@@ -150,29 +150,21 @@ async function tryPromise<T, E>(options: {
   }
 }
 
-// =============================================================================
-// Defects
-// =============================================================================
-
 /**
  * An unrecoverable defect (a bug), as opposed to an expected Err.
  * Class semantics are fine here: a Panic is thrown, never returned,
  * and must never cross a serialization boundary.
  */
 export class Panic extends Error {
-  override readonly name = "Panic";
   constructor(message: string, cause?: unknown) {
     super(message, cause !== undefined ? { cause } : undefined);
+    this.name = "Panic";
   }
 }
 
 export function isPanic(value: unknown): value is Panic {
   return value instanceof Panic;
 }
-
-// =============================================================================
-// Generator Composition
-// =============================================================================
 
 /**
  * Yieldable adapter passed to a Result.gen body: unwraps Ok, short-circuits Err.
@@ -242,10 +234,6 @@ async function gen<
   return state.value as Out;
 }
 
-// =============================================================================
-// Tagged Error Helpers
-// =============================================================================
-
 export type Tagged<Tag extends string> = { readonly _tag: Tag };
 
 export function isTagged<Tag extends string>(
@@ -276,10 +264,6 @@ export function withCause<T extends object>(error: T, cause: unknown): T {
   }
   return error;
 }
-
-// =============================================================================
-// Namespace
-// =============================================================================
 
 export const Result = {
   ok,
